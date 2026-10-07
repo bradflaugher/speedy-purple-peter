@@ -14,9 +14,9 @@ BANKREF_EXTERN(assets)
 #endif
 
 /* ---- world BG tileset (also used by the HUD window and menus) ---- */
-#define BG_TILE_COUNT 150
+#define BG_TILE_COUNT 153
 #define BG_TILES_LO   128
-#define BG_TILES_HI   22
+#define BG_TILES_HI   25
 extern const uint8_t bg_tiles[];
 extern const uint8_t mt_tiles[T_COUNT][4];
 extern const uint8_t mt_attr[T_COUNT][4];
