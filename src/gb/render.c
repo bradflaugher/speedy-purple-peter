@@ -11,10 +11,12 @@
 #define COLMASK 0x0FFF
 #define SST static                  /* hot locals in static RAM: faster than the stack */
 extern uint8_t dbg_ly[8];          /* LY stamps of this frame (main.c); [0] = its start */
-#define VIEW_COLS 14                /* metatile columns drawn from the camera's column */
+/* metatile columns drawn from the camera's column: the BG map's whole ring (the camera never goes
+   back), so a column can wait for a quieter frame while 11 or more are ready */
+#define VIEW_COLS 16
+#define HUD_BUSY 120               /* lines into the frame after which the HUD waits */
 
-static uint16_t drawn_col;
-uint16_t dbg_built, dbg_dirty_drawn;          /* the sim's gen_col last frame (spread the work out) */          /* next column to draw (the BG ring holds 16) */
+static uint16_t drawn_col;           /* next column to draw */
 static uint8_t tbuf[LV_ROWS * 4], abuf[LV_ROWS * 4];
 static uint8_t oam_n;
 static uint8_t hud_coins = 0xFF, hud_lives = 0xFF, hud_sector_v = 0xFF;
@@ -188,14 +190,26 @@ static void draw_col(uint16_t col)
     }
 }
 
+/* one cell: 2 x 2 tiles, straight to VRAM like vram_strip */
+static void vram_cell(uint8_t *dst, const uint8_t *src)
+{
+    while (STAT_REG & STATF_BUSY) {}
+    dst[0] = src[0];
+    dst[1] = src[1];
+    while (STAT_REG & STATF_BUSY) {}
+    dst[32] = src[2];
+    dst[33] = src[3];
+}
+
 static void draw_cell(uint16_t col, uint8_t row)
 {
-    uint8_t t = vis_map[W.lv[(uint8_t)col & (LV_COLS - 1)][row]], mx = (uint8_t)((col & 15) << 1);
-    if (bumping(col, row)) t = T_SKY;
-    set_bkg_tiles(mx, (uint8_t)(row << 1), 2, 2, ram_mt_tiles[t]);
+    uint8_t t = vis_map[W.lv[(uint8_t)col & (LV_COLS - 1)][row]];
+    uint8_t *dst = (uint8_t *)0x9800 + ((uint16_t)row << 6) + (uint8_t)((col & 15) << 1);
+    if (W.n_fx && bumping(col, row)) t = T_SKY;
+    vram_cell(dst, ram_mt_tiles[t]);
     if (is_cgb) {
         VBK_REG = 1;
-        set_bkg_tiles(mx, (uint8_t)(row << 1), 2, 2, ram_mt_attr[t]);
+        vram_cell(dst, ram_mt_attr[t]);
         VBK_REG = 0;
     }
 }
@@ -225,17 +239,16 @@ static void stream(void)
         int16_t d = (int16_t)((col - c) << 4) >> 4;          /* signed 12-bit distance */
         if (d > 128) col -= 256; else if (d < -128) col += 256;
         col &= COLMASK;
-        if ((uint16_t)((drawn_col - col - 1) & COLMASK) < 16) { draw_cell(col, W.dirty_row[i]); dbg_dirty_drawn = frame_count; }
+        if ((uint16_t)((drawn_col - col - 1) & COLMASK) < 16) { draw_cell(col, W.dirty_row[i]); }
     }
     /* the next column: built here, written by the VBlank handler over two VBlanks (the camera
        needs at least 6 frames to cross a column) */
     if (col_pending) return;
     i = (uint8_t)((drawn_col - c) & COLMASK);
-    if (i >= VIEW_COLS) return;
+    if (i >= VIEW_COLS || drawn_col == W.gen_col) return;  /* (not made yet) */
     /* not needed for another column: leave it for a quieter frame if this one is busy */
-    if (i >= VIEW_COLS - 2 && (uint8_t)(LY_REG - dbg_ly[0] + (LY_REG < dbg_ly[0] ? 154 : 0)) > 60) return;
+    if (i >= 12 && (uint8_t)(LY_REG - dbg_ly[0] + (LY_REG < dbg_ly[0] ? 154 : 0)) > 75) return;
     {
-        dbg_built = frame_count;
         build_col(drawn_col, col_buf[0], col_buf[1]);
         col_dst = (uint8_t *)0x9800 + ((drawn_col & 15) << 1);
         col_pending = 2;
@@ -247,9 +260,6 @@ static void stream(void)
  * Written for SDCC: positions are turned into 8-bit OAM coordinates once (at()), then objects
  * are written with a byte pointer. Off-screen halves need no clipping: an OAM x of 0 or >= 168
  * and a y of 0 or >= 160 are invisible, and the 8-bit wrap puts everything off-screen there. */
-uint8_t dbg_sprl[4];
-uint8_t dbg_spr2[4];
-uint8_t dbg_hud_ly[4];
 static uint8_t ox, oy;              /* OAM x, y of the current object's top-left */
 static uint8_t *op8;                /* next free OAM byte */
 static uint8_t *oam_last = (uint8_t *)&shadow_OAM[40];   /* the end of last frame's objects */
@@ -264,16 +274,60 @@ void sprites_clear(void) BANKED
     oam_last = (uint8_t *)shadow_OAM;
 }
 
-/* 0 if the 16 px wide object at world (x, y) is entirely off-screen */
-static uint8_t at(uint16_t x, int16_t y)
+/* 0 if the 16 px wide object at world (x, y) is entirely off-screen; else its OAM position in
+   (ox, oy). In assembly: it is called for every object, every frame. at_cx and at_cy are the
+   camera less the OAM offsets (8, 16) and the HUD (16), set by draw_sprites. */
+static uint16_t at_cx, at_cy;
+static uint8_t at(uint16_t x, int16_t y) __naked      /* x in DE, y in BC; result in A */
 {
-    SST uint16_t sx, sy;
-    sx = (uint16_t)(x - W.cam_x + 8);
-    sy = (uint16_t)(y - W.cam_y + 32);
-    if ((uint16_t)(sx + 8) >= 184 || (uint16_t)(sy + 16) >= 192) return 0;
-    ox = (uint8_t)sx;
-    oy = (uint8_t)sy;
-    return 1;
+    (void)x; (void)y;
+    __asm
+        ld  a, (_at_cx)             ; de = sx = x - at_cx
+        ld  l, a
+        ld  a, e
+        sub a, l
+        ld  e, a
+        ld  a, (_at_cx + 1)
+        ld  l, a
+        ld  a, d
+        sbc a, l
+        ld  d, a
+        ld  hl, #8                  ; off unless sx + 8 < 184
+        add hl, de
+        ld  a, h
+        or  a, a
+        jr  nz, 9$
+        ld  a, l
+        cp  a, #184
+        jr  nc, 9$
+        ld  a, (_at_cy)             ; bc = sy = y - at_cy
+        ld  l, a
+        ld  a, c
+        sub a, l
+        ld  c, a
+        ld  a, (_at_cy + 1)
+        ld  l, a
+        ld  a, b
+        sbc a, l
+        ld  b, a
+        ld  hl, #16                 ; off unless sy + 16 < 192
+        add hl, bc
+        ld  a, h
+        or  a, a
+        jr  nz, 9$
+        ld  a, l
+        cp  a, #192
+        jr  nc, 9$
+        ld  a, e
+        ld  (_ox), a
+        ld  a, c
+        ld  (_oy), a
+        ld  a, #1
+        ret
+    9$:
+        xor a, a
+        ret
+    __endasm;
 }
 
 static void put1(uint8_t tile, uint8_t prop)            /* one 8x16 object at (ox, oy) */
@@ -380,35 +434,44 @@ static const uint8_t score_l[11] = { SPR_N10, SPR_N20, SPR_N40, SPR_N50, SPR_N80
 static const uint8_t score_r[11] = { SPR_N0, SPR_N0, SPR_N0, SPR_N0, SPR_N0, SPR_N00, SPR_N00, SPR_N00, SPR_N00, SPR_N00, SPR_NP };
 static const uint8_t coin_t[4] = { SPR_COIN0, SPR_COIN1, SPR_COIN2, SPR_COIN1 };
 
+static void draw_one_fx(const Fx *f)
+{
+    uint8_t k = f->kind;
+    if (k == FX_BUMP) {
+        if (at(f->x, (int16_t)(f->y + f->vy))) put2(f->v == T_USED ? SPR_USED : SPR_BRICK, pl_block);
+        return;
+    }
+    if (!at(f->x, f->y)) return;
+    switch (k) {
+    case FX_COIN: {
+        uint8_t c = (uint8_t)((f->t >> 1) & 3);
+        put1(coin_t[c], (uint8_t)(pl_gold | (c == 3 ? S_FLIPX : 0)));
+        break;
+    }
+    case FX_SCORE:
+        put1(score_l[f->v], pl_fx);
+        ox += 8;
+        put1(score_r[f->v], pl_fx);
+        break;
+    case FX_SHARD:
+        put1(SPR_SHARD, (uint8_t)(pl_block | ((f->t & 4) ? S_FLIPX : 0) | ((f->t & 8) ? S_FLIPY : 0)));
+        break;
+    case FX_PUFF:
+        put1(SPR_PUFF, (uint8_t)(pl_fx | ((f->t & 2) ? S_FLIPX : 0)));
+        break;
+    }
+}
+
 static void draw_fx(void)
 {
-    const Fx *f;
-    for (f = W.fx; f != W.fx + MAX_FX; f++) {
-        uint8_t k = f->kind;
-        if (!k) continue;
-        if (k == FX_BUMP) {
-            if (at(f->x, (int16_t)(f->y + f->vy))) put2(f->v == T_USED ? SPR_USED : SPR_BRICK, pl_block);
-            continue;
-        }
-        if (!at(f->x, f->y)) continue;
-        switch (k) {
-        case FX_COIN: {
-            uint8_t c = (uint8_t)((f->t >> 1) & 3);
-            put1(coin_t[c], (uint8_t)(pl_gold | (c == 3 ? S_FLIPX : 0)));
-            break;
-        }
-        case FX_SCORE:
-            put1(score_l[f->v], pl_fx);
-            ox += 8;
-            put1(score_r[f->v], pl_fx);
-            break;
-        case FX_SHARD:
-            put1(SPR_SHARD, (uint8_t)(pl_block | ((f->t & 4) ? S_FLIPX : 0) | ((f->t & 8) ? S_FLIPY : 0)));
-            break;
-        case FX_PUFF:
-            put1(SPR_PUFF, (uint8_t)(pl_fx | ((f->t & 2) ? S_FLIPX : 0)));
-            break;
-        }
+    static const Fx *f;
+    static uint8_t left;
+    left = W.n_fx;                                         /* stop after the last one */
+    if (!left) return;
+    for (f = W.fx;; f++) {
+        if (!f->kind) continue;
+        draw_one_fx(f);
+        if (!--left) break;
     }
 }
 
@@ -479,26 +542,22 @@ static void draw_sprites(void)
         pl_red1 = S_PALETTE;
     }
     op8 = (uint8_t *)shadow_OAM;
+    at_cx = (uint16_t)(W.cam_x - 8);
+    at_cy = (uint16_t)(W.cam_y - 32);
     draw_peter();
     for (s = W.shot; s != W.shot + MAX_SHOTS; s++)
         if (s->kind && at(s->x, s->y))
             put1(SPR_SHOT, (uint8_t)(pl_fx | ((frame_count & 2) ? S_FLIPX : 0) | ((frame_count & 4) ? S_FLIPY : 0)));
-    dbg_sprl[0] = LY_REG;
     draw_ents();
-    dbg_sprl[1] = LY_REG;
     draw_item();
-    dbg_spr2[0] = LY_REG;
     if (W.flag_col != 0xFFFF && at((uint16_t)(W.flag_col * 16 - 8), W.flag_y)) put2(SPR_FLAG, pl_gold);
-    dbg_spr2[1] = LY_REG;
     draw_fx();
-    dbg_spr2[2] = LY_REG;
     /* hide the objects left over from the last frame (only those) */
     {
         uint8_t *end = op8;
         for (p = op8; p < oam_last; p += 4) *p = 0;
         oam_last = end;
     }
-    dbg_spr2[3] = LY_REG;
 }
 
 /* ------------------------------------------------------------------ HUD */
@@ -547,15 +606,12 @@ void hud_pause(uint8_t on) BANKED
 }
 
 static uint8_t hud_turn;
+static uint8_t hud_waited;         /* frames the HUD has waited for a quieter one */
 
 /* one HUD field per frame, in turn (each costs a decimal conversion and VRAM writes) */
 static void hud_update(void)
 {
     char t[8];
-    {
-        extern uint8_t dbg_hud_case;
-        dbg_hud_case = (uint8_t)(hud_turn + 1) & 3;
-    }
     switch (++hud_turn & 3) {
     case 0:
         if (W.score_rev != hud_score_rev) {     /* the sim keeps the score's digits */
@@ -618,7 +674,14 @@ void render_frame(void) BANKED
     dbg_ly[2] = LY_REG;
     draw_sprites();
     dbg_ly[3] = LY_REG;
-    hud_update();
+    /* the HUD takes one field a frame in turn: on a frame already running long it waits (for
+       three frames at most) */
+    if (hud_waited >= 3 || (uint8_t)(LY_REG - dbg_ly[0] + (LY_REG < dbg_ly[0] ? 154 : 0)) <= HUD_BUSY) {
+        hud_waited = 0;
+        hud_update();
+    } else {
+        hud_waited++;
+    }
     dbg_ly[7] = LY_REG;
     sounds();
     dbg_ly[4] = LY_REG;

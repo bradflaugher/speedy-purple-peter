@@ -175,9 +175,11 @@ typedef struct {
 
     Ent e[MAX_ENTS];
     uint8_t n_ents;          /* enemies about (counted each frame) */
+    uint8_t bump_i;          /* which slots' turn it is to check for walkers bumping */
     Ent item;                /* one power-up at a time */
     Ent shot[MAX_SHOTS];
     Fx fx[MAX_FX];
+    uint8_t n_fx;            /* effects in use (the loops skip them all when 0) */
 
     /* the multi-coin brick being emptied */
     uint8_t mc_col, mc_row, mc_t, mc_n;

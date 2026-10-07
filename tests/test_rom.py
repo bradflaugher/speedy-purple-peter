@@ -1,9 +1,10 @@
 """End-to-end tests: boot the real ROM in PyBoy (headless, DMG and CGB) and play it.
 
 The host build of the simulation is the oracle. `build/sppgen path` lets the search bot play
-two sectors on the host and writes the buttons it pressed, one line per frame, plus the state it
+some sectors on the host and writes the buttons it pressed, one line per frame, plus the state it
 ended in. The ROM is fed exactly those buttons (by its own step counter, so a slow frame cannot
-shift them) and must end in exactly the same state: same position, score, sectors, coins.
+shift them) and must end in exactly the same state: same position, score, sectors, coins. The
+same runs measure the frame budget (frames that missed their VBlank).
 
 Run: make test-rom   (needs `pip install pyboy pillow numpy`)
 """
@@ -25,7 +26,7 @@ SEED = 0x1985                     # the title's default seed on a fresh save
 # keep in step with dbg_world_off[] in src/gb/main.c
 FIELDS = ['px', 'py', 'pvx', 'pvy', 'power', 'pstate', 'lives', 'score', 'frames', 'sectors_done',
           'dist', 'time', 'cam_x', 'over', 'coins', 'seed', 'ground', 'nova_t', 'cam_y', 'god', 'size',
-          'beacon_col', 'gen_col', 'lv', 'bonus', 'gen']
+          'beacon_col', 'gen_col', 'lv', 'bonus', 'gen', 'e']
 SIZES = {'px': 2, 'py': -2, 'pvx': -2, 'pvy': -2, 'power': 1, 'pstate': 1, 'lives': 1, 'score': 4,
          'frames': 4, 'sectors_done': 2, 'dist': 2, 'time': 2, 'cam_x': 2, 'over': 1, 'coins': 1,
          'seed': 2, 'ground': 1, 'nova_t': 2, 'cam_y': 1, 'god': 1,
@@ -36,7 +37,7 @@ PS_PLAY, PS_GROW, PS_SHRINK, PS_DEAD, PS_OVER = range(5)
 
 
 class Game:
-    def __init__(self, cgb, sram=None):
+    def __init__(self, cgb, sram=None, seed=None):
         self.ram = io.BytesIO(sram if sram is not None else bytes(SRAM_SIZE))
         self.pb = PyBoy(ROM, window='null', cgb=cgb, symbols=SYM, sound_emulated=False, ram_file=self.ram)
         self.cgb = cgb
@@ -45,6 +46,12 @@ class Game:
                     for i, f in enumerate(FIELDS)}
         self.W = self.addr('_W')
         self.held = 0
+        if seed is not None:           # the title starts on this seed (as if it were the last one played)
+            a = self.addr('_last_seed')
+            def poke(_):
+                self.pb.memory[a] = seed & 0xFF
+                self.pb.memory[a + 1] = seed >> 8
+            self.pb.hook_register(*self.pb.symbol_lookup('_title_screen'), poke, None)
 
     def addr(self, name):
         return self.pb.symbol_lookup(name)[1]
@@ -102,9 +109,9 @@ class Game:
         self.pb.stop(save=save)
 
 
-def host_path(sectors):
-    out = os.path.join(ROOT, 'build', 'path_%d.txt' % sectors)
-    line = subprocess.check_output([SPPGEN, 'path', str(SEED), str(sectors), out], text=True)
+def host_path(sectors, seed=SEED):
+    out = os.path.join(ROOT, 'build', 'path_%d_%04x.txt' % (sectors, seed))
+    line = subprocess.check_output([SPPGEN, 'path', str(seed), str(sectors), out], text=True)
     toks = line.split()
     state = {toks[i]: int(toks[i + 1]) for i in range(0, len(toks) - 1, 2)}
     with open(out) as f:
@@ -112,17 +119,21 @@ def host_path(sectors):
     return keys, state
 
 
+# the frame budget runs: eight sectors on each of these seeds, on both machines
+BUDGET_SEEDS = [0x1985, 0x1234, 0xBEEF, 0x0042, 0x7A11, 0xC0DE, 0x2024, 0x9999]
+
+
 class TestRom(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.keys, cls.expect = host_path(2)
 
-    def play_path(self, cgb):
-        g = Game(cgb)
+    def play_path(self, cgb, keys, seed=SEED):
+        g = Game(cgb, seed=seed)
         g.start_run()
-        self.assertEqual(g.w('seed'), SEED)
-        n = len(self.keys)
-        ring, steps = g.addr('_dbg_ring'), g.addr('_dbg_steps')
+        self.assertEqual(g.w('seed'), seed)
+        n = len(keys)
+        ring = g.addr('_dbg_ring')
         g.pb.memory[g.addr('_dbg_stop_at')] = 0
         g.pb.memory[g.addr('_dbg_stop_at') + 1] = 0
         fed = 0
@@ -133,7 +144,7 @@ class TestRom(unittest.TestCase):
             s = g.var('_dbg_steps')
             # keep the ring filled up to 200 steps ahead, and the stop mark just past it
             while fed < n and fed < s + 200:
-                g.pb.memory[ring + (fed & 255)] = self.keys[fed]
+                g.pb.memory[ring + (fed & 255)] = keys[fed]
                 fed += 1
             stop = fed
             g.pb.memory[g.addr('_dbg_stop_at')] = stop & 0xFF
@@ -143,22 +154,22 @@ class TestRom(unittest.TestCase):
             g.tick(16)
             guard += 1
             self.assertLess(guard, n, 'the ROM stopped stepping')
+        g.tick(4)       # the step counter goes up as a step begins: let the last one finish
         drops = g.var('_dbg_drops') - d0
         return g, drops
 
+    def state(self, g):
+        return {'px': g.w('px'), 'py': g.w('py'), 'score': g.w('score'), 'sectors': g.w('sectors_done'),
+                'frames': g.w('frames'), 'coins': g.w('coins'), 'lives': g.w('lives'), 'power': g.w('power'),
+                'dist': g.w('dist'), 'time': g.w('time')}
+
     def check_same_as_host(self, cgb):
-        g, drops = self.play_path(cgb)
+        g, drops = self.play_path(cgb, self.keys)
         try:
-            got = {'px': g.w('px'), 'py': g.w('py'), 'score': g.w('score'), 'sectors': g.w('sectors_done'),
-                   'frames': g.w('frames'), 'coins': g.w('coins'), 'lives': g.w('lives'), 'power': g.w('power'),
-                   'dist': g.w('dist'), 'time': g.w('time')}
-            want = {k: self.expect[k] for k in got}
-            self.assertEqual(got, want)
+            got = self.state(g)
+            self.assertEqual(got, {k: self.expect[k] for k in got})
             g.shot('%s_after_two_sectors.png' % ('cgb' if cgb else 'dmg'))
-            n = len(self.keys)
-            # the frame budget: CGB (double speed) is a locked 60 fps; the DMG may slow down a
-            # little in busy stretches (as many Game Boy games do) but not more than this
-            self.assertLessEqual(drops, n // (200 if cgb else 10), "%d slow frames in %d" % (drops, n))
+            self.assertEqual(drops, 0, "%d slow frames in %d" % (drops, len(self.keys)))
         finally:
             g.stop()
 
@@ -167,6 +178,26 @@ class TestRom(unittest.TestCase):
 
     def test_cgb_plays_like_the_host(self):
         self.check_same_as_host(True)
+
+    def test_frame_budget(self):
+        """Eight sectors on eight seeds, each the same as on the host. The CGB (double speed) never
+        misses a frame; the DMG at most one in 20,000 (busy moments: a crowd, a bump, the time bonus)."""
+        for cgb in (False, True):
+            total = drops = 0
+            report = []
+            for seed in BUDGET_SEEDS:
+                keys, expect = host_path(8, seed)
+                g, d = self.play_path(cgb, keys, seed)
+                try:
+                    got = self.state(g)
+                    self.assertEqual(got, {k: expect[k] for k in got}, 'seed %04X' % seed)
+                finally:
+                    g.stop()
+                total += len(keys)
+                drops += d
+                report.append('%04X:%d' % (seed, d))
+            print('\n  %s: %d slow frames in %d (%s)' % ('CGB' if cgb else 'DMG', drops, total, ' '.join(report)))
+            self.assertLessEqual(drops, 0 if cgb else total // 20000)
 
     def test_title_and_seed_entry(self):
         g = Game(True)

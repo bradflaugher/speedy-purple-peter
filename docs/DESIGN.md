@@ -75,23 +75,35 @@ sectors with enemies on 12 seeds.
 
 ## 4. Performance
 
-SDCC's code for 16-bit, struct-heavy C is several times slower than hand-written SM83, and the
-DMG has about 17,500 cycles a frame. Measured with LY stamps in PyBoy (`dbg_ly`, `dbg_sim_ly`):
+The goal is no slow frames at all. SDCC's code for 16-bit, struct-heavy C is several times slower
+than hand-written SM83, and the DMG has about 17,500 cycles (154 lines) a frame, so the busy paths
+were measured (LY stamps and cycle-counting PyBoy hooks on a `-DSPP_PROFILE -debug` build) and
+rewritten one by one:
 
 - the tile lookup the physics uses most is a few lines of assembly (`cell_px` in sim_int.h), and
   the level ring is the first field of the world so it sits at `_W`;
-- no 32-bit or multiply in the per-frame path (sub-pixel moves fit 16 bits);
-- loops walk pointers instead of indexing arrays of structs;
-- sprites are written as bytes straight into shadow OAM after one 8-bit position conversion;
-- VRAM writes (columns, HUD, animated tiles) happen in VBlank, never waiting on the LCD;
-- the HUD updates one field per frame;
-- the hottest functions keep their locals in static RAM (`SST`), which SDCC addresses directly;
+- so is the sprites' on-screen test and OAM position (`at`), the two-object writer (`put2a`) and
+  the sliding shell's "who is near me" scan (`near_x`);
+- the entity being updated is copied into a plain global (`E`), which SDCC reaches directly
+  instead of through a pointer; walkers strolling between cell boundaries and Moon Chompers are
+  updated in place without the copy; a walker only probes the level when it enters a new cell;
+- the score is awarded in fifties and kept as decimal digits for the HUD (no 32-bit compare or
+  division per award); effects loops stop after the last live effect;
+- loops walk pointers instead of indexing arrays of structs, and the hottest functions keep
+  their locals in static RAM (`SST`), which SDCC addresses directly;
+- level generation keeps 16 to 22 columns of slack and waits for a frame with at most one enemy
+  about; starting a new segment gets a frame of its own;
+- the BG map is a 16-column ring drawn up to 5 columns ahead, so the next column waits for a
+  quiet frame; it is written by the VBlank handler over two VBlanks;
+- the HUD updates one field per frame, and waits (up to three frames) when a frame runs long;
 - only the OAM entries left over from the previous frame are cleared.
 
-On a Game Boy Color (double speed) the game is a locked 60 fps. On the original DMG it drops about
-one frame in twenty in busy stretches (about 5% over the bot's full-speed run; the ROM test fails
-above 10%). The simulation is frame-locked, so a slow frame never changes the outcome: the run timer
-counts game frames, and a seed plays identically on every machine.
+`test_rom.py`'s frame budget test plays 8 sectors on 8 seeds (66,000 frames) on both machines,
+each run identical to the host's. On a Game Boy Color (double speed): no slow frames. On the
+original DMG: 2 slow frames in 66,336 (0.003%; the test allows one in 20,000), where a block bump,
+a crowd and the time bonus all land on the same frame. The simulation is frame-locked, so a slow
+frame never changes the outcome: the run timer counts game frames, and a seed plays identically
+on every machine.
 
 ## 5. A compiler bug, and how it was caught
 
@@ -107,3 +119,8 @@ A 4-channel engine (`src/gb/sound.c`): CH2 lead, CH3 bass, CH4 drums, CH1 harmon
 needs it. All melodies are original. It never switches a DAC off, never rewrites NR51 after boot,
 only writes wave RAM with CH3 stopped, and moves volumes a step at a time, so it is click-free on
 real hardware. `tests/test_sound.c` checks every song and effect against a fake APU.
+
+The run's theme, "Starlight Sprint", is an E-minor chase at 150 BPM (a 45 s loop) with pitch
+slides, delayed vibrato and arpeggiated chords, in the bright, bouncy spirit of the classic 8-bit
+moon-stage themes; the title, invincibility, hurry, death and game-over tunes share its motifs.
+The engine averages about 300 cycles a frame and runs from the VBlank handler.

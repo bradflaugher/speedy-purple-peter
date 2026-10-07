@@ -36,7 +36,7 @@ const uint16_t dbg_world_off[] = {
     offsetof(World, cam_x), offsetof(World, over), offsetof(World, coins), offsetof(World, seed),
     offsetof(World, ground), offsetof(World, nova_t), offsetof(World, cam_y), offsetof(World, god),
     sizeof(World), offsetof(World, beacon_col), offsetof(World, gen_col), offsetof(World, lv),
-    offsetof(World, bonus), offsetof(World, gen)
+    offsetof(World, bonus), offsetof(World, gen), offsetof(World, e)
 };
 
 /* debug counters the ROM tests read (by symbol) */
@@ -47,12 +47,14 @@ uint16_t dbg_steps;               /* sim steps since the run began */
 uint8_t dbg_feed, dbg_fed_prev;
 uint16_t dbg_stop_at;
 uint8_t dbg_ring[256];
-uint8_t dbg_ly[8];
+uint8_t dbg_ly[8];                 /* LY at stages of this frame; [0] = its start (the renderer
+                                      uses it to tell a busy frame) */
+#ifdef SPP_PROFILE                 /* profiling stamps (-DSPP_PROFILE builds) */
 uint8_t dbg_sim_ly[16];
-uint8_t dbg_slow[24];
-uint8_t dbg_hud_case, dbg_slow_hud;
+uint8_t dbg_slow[24];              /* dbg_ly + dbg_sim_ly of the last slow frame */
 uint8_t dbg_gen_ly[4];
-uint8_t dbg_ent_ly[6];             /* lines each entity's full update took */             /* LY stamps inside gen_column */             /* dbg_ly + dbg_sim_ly of the last slow frame */               /* LY at stages of the last frame (profiling) */
+uint8_t dbg_ent_ly[6];             /* lines each entity's full update took */
+#endif
 static uint16_t last_vbl;
 
 static void lcd_isr(void)
@@ -225,9 +227,10 @@ void frame_end(void)
     dbg_frames++;
     if ((uint16_t)(sys_time - last_vbl) > 1) {
         dbg_drops++;
+#ifdef SPP_PROFILE
         memcpy(dbg_slow, dbg_ly, 8);            /* what the slow frame spent its time on */
         memcpy(dbg_slow + 8, dbg_sim_ly, 16);
-        dbg_slow_hud = dbg_hud_case;
+#endif
     }
     last_vbl = sys_time;
 }

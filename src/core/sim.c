@@ -36,6 +36,7 @@ uint8_t sim_peter_h(void) SIM_BANKED
 
 #define GEN_AHEAD 22
 #define GEN_MIN 16
+#define GEN_URGENT 13
 
 /* one column of the level; returns nothing, keeps the beacon and sector bookkeeping */
 static void gen_one(void)
@@ -59,8 +60,8 @@ static void generate(void)
 {
     uint16_t cc = (uint16_t)(w->cam_x >> 4);
     uint8_t ahead = (uint8_t)((w->gen_col - cc) & COLMASK);
-    while (ahead < GEN_MIN) { gen_one(); ahead++; }
-    if (ahead < GEN_AHEAD && w->n_ents < 2) {
+    while (ahead < GEN_URGENT) { gen_one(); ahead++; }
+    if (ahead < GEN_MIN || (ahead < GEN_AHEAD && w->n_ents < 2)) {
         /* starting a new segment (rolling its layout) is the slow part: give it its own frame */
         if (w->gen.pos >= w->gen.len) gen_prepare(&w->gen);
         else gen_one();
@@ -94,6 +95,7 @@ void sim_respawn(void) SIM_BANKED
     memset(&w->item, 0, sizeof(w->item));
     memset(w->shot, 0, sizeof(w->shot));
     memset(w->fx, 0, sizeof(w->fx));
+    w->n_fx = 0;
     w->mc_t = 0;
     w->px = (uint16_t)(w->cam_x + 32);
     w->pxs = 0;
@@ -172,7 +174,7 @@ static void bump(uint16_t col, uint8_t row)
                 f->vx = svx[i];
                 f->vy = svy[i];
             }
-            add_score(50);
+            add_score(1);
             w->sfx |= EV_BREAK;
             return;
         }
@@ -220,21 +222,29 @@ static void bump(uint16_t col, uint8_t row)
 /* collect star bits the box touches: the cells under its corners (and its middle when big) */
 static void touch_coins(int16_t top, int16_t bot)
 {
-    uint8_t c0 = (uint8_t)((w->px + 3) >> 4), c1 = (uint8_t)((w->px + 12) >> 4), r, r1, c;
+    SST uint8_t c, c1, r0, n, i;
+    SST uint8_t *p;
     if (bot < 0) return;
-    r = top < 0 ? 0 : (uint8_t)(top >> 4);
-    r1 = (uint8_t)(bot >> 4);
-    if (r1 >= LV_ROWS) r1 = LV_ROWS - 1;
-    for (; r <= r1; r++)
-        for (c = c0;; c++) {
-            uint8_t *p = &w->lv[c & (LV_COLS - 1)][r];
+    c = (uint8_t)((w->px + 3) >> 4);
+    c1 = (uint8_t)((w->px + 12) >> 4);
+    r0 = top < 0 ? 0 : (uint8_t)(top >> 4);
+    n = (uint8_t)(bot >> 4);
+    if (n >= LV_ROWS) n = LV_ROWS - 1;
+    if (r0 > n) return;
+    n = (uint8_t)(n - r0);                                 /* rows to look at, less one */
+    for (;;) {
+        p = &w->lv[c & (LV_COLS - 1)][r0];
+        for (i = 0;; i++, p++) {
             if (*p == T_COIN) {
                 *p = T_SKY;
-                mark(c, r);
+                mark(c, (uint8_t)(r0 + i));
                 get_coin();
             }
-            if (c == c1) break;
+            if (i == n) break;
         }
+        if (c == c1) break;
+        c++;
+    }
 }
 
 static void choose_gravity(uint16_t speed)
@@ -357,15 +367,19 @@ static void peter_physics(void)
     /* horizontal move and walls */
     peter_move_x();
     {
-        int16_t ys[3];
-        uint8_t n, i, hitl = 0, hitr = 0;
-        if (big) { ys[0] = (int16_t)(w->py + 6); ys[1] = (int16_t)(w->py + 16); ys[2] = (int16_t)(w->py + 27); n = 3; }
-        else { ys[0] = (int16_t)(w->py + ht + 6); ys[1] = (int16_t)(w->py + ht + 12); n = 2; }
+        SST int16_t y0, y1, y2;
+        SST uint8_t hitl, hitr;
+        SST uint16_t xl, xr;
+        hitl = hitr = 0;
+        if (big) { y0 = (int16_t)(w->py + 6); y1 = (int16_t)(w->py + 16); y2 = (int16_t)(w->py + 27); }
+        else { y0 = (int16_t)(w->py + ht + 6); y1 = (int16_t)(w->py + ht + 12); y2 = y1; }
+        xl = (uint16_t)(w->px + 2);
+        xr = (uint16_t)(w->px + 13);
         /* only the side he is moving towards (both when standing still) */
-        for (i = 0; i < n; i++) {
-            if (w->pvx <= 0 && solid_px((uint16_t)(w->px + 2), ys[i])) hitl = 1;
-            if (w->pvx >= 0 && solid_px((uint16_t)(w->px + 13), ys[i])) hitr = 1;
-        }
+        if (w->pvx <= 0)
+            hitl = (uint8_t)(solid_px(xl, y0) || solid_px(xl, y1) || (big && solid_px(xl, y2)));
+        if (w->pvx >= 0)
+            hitr = (uint8_t)(solid_px(xr, y0) || solid_px(xr, y1) || (big && solid_px(xr, y2)));
         if (hitr && !hitl) {
             w->px = (uint16_t)(((w->px + 13) & ~15) - 14);
             if (w->pvx > 0) w->pvx = 0;
@@ -375,7 +389,7 @@ static void peter_physics(void)
         }
     }
     /* the screen's left edge is a wall */
-    if ((int16_t)(w->px - w->cam_x) < 0) {
+    if ((uint16_t)(w->px - w->cam_x) >= 0x8000u) {
         w->px = w->cam_x;
         if (w->pvx < 0) w->pvx = 0;
     }
@@ -421,7 +435,7 @@ static void peter_physics(void)
     /* run animation */
     if (w->ground) {
         w->anim_t = (uint16_t)(w->anim_t + (ABS16(w->pvx) >> 4));
-        while (w->anim_t >= 7 * 256) { w->anim_t -= 7 * 256; w->anim = (uint8_t)((w->anim + 1) % 3); }
+        while (w->anim_t >= 7 * 256) { w->anim_t -= 7 * 256; if (++w->anim == 3) w->anim = 0; }
         if (!w->pvx) w->anim = 0;
     }
     if (w->shoot_t) w->shoot_t--;
@@ -469,6 +483,7 @@ static void camera(void)
     feet = (int16_t)(w->py + (w->power ? 32 : 16));
     target = (int16_t)w->cam_y;
     if (sx > CAM_LEAD) w->cam_x = (uint16_t)(w->cam_x + (sx - CAM_LEAD));
+    if (w->ground && w->cam_y == CAM_Y_MAX && feet >= GROUND_ROW * 16) goto dist;  /* the usual */
     sy = (int16_t)(feet - w->cam_y);
     if (w->ground) target = (int16_t)(feet - (VIEW_H - 32));        /* settle: feet 32 px up */
     else if (sy < 8) target = (int16_t)(feet - 8);                 /* high above: follow up */
@@ -478,6 +493,7 @@ static void camera(void)
     if (target < (int16_t)w->cam_y - 4) target = (int16_t)w->cam_y - 4;
     if (target > (int16_t)w->cam_y + 4) target = (int16_t)w->cam_y + 4;
     w->cam_y = (uint8_t)target;
+dist:
     cc = (uint16_t)(w->cam_x >> 4);
     if ((uint8_t)cc != (uint8_t)w->far_col) {       /* (cheap test first) */
         uint16_t d = (uint16_t)((cc - w->far_col) & COLMASK);
@@ -491,10 +507,12 @@ static void camera(void)
 static void tick_time(void)
 {
     if (w->bonus) {                                        /* count the time bonus in */
-        uint8_t n = w->bonus >= 2 ? 2 : 1;
+        uint8_t n;
+        if (w->frames & 1) return;                         /* 4 units every other frame */
+        n = w->bonus >= 4 ? 4 : (uint8_t)w->bonus;
         w->bonus -= n;
         w->time -= n;
-        add_score(n == 2 ? 100 : 50);
+        add_score(n);                                      /* 50 points a unit */
         w->sfx |= EV_TICK;
         if (!w->bonus) {
             w->time = TIME_START;

@@ -10,7 +10,7 @@
 #endif
 #include "level.h"
 
-#if defined(__SDCC)
+#if defined(__SDCC) && defined(SPP_PROFILE)       /* profiling stamps (see sim_int.h) */
 extern uint8_t dbg_gen_ly[4];
 #define GPROF(i) (dbg_gen_ly[i] = *(volatile uint8_t *)0xFF44)
 #else

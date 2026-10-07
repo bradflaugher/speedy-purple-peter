@@ -8,8 +8,8 @@
 
 #define w (&W)
 
-/* profiling stamps (LY) on the Game Boy; nothing on the host */
-#if defined(__SDCC)
+/* profiling stamps (LY), in a Game Boy build with -DSPP_PROFILE; nothing otherwise */
+#if defined(__SDCC) && defined(SPP_PROFILE)
 extern uint8_t dbg_sim_ly[16];
 #define PROF(i) (dbg_sim_ly[i] = *(volatile uint8_t *)0xFF44)
 #else
@@ -33,7 +33,8 @@ extern uint8_t dbg_sim_ly[16];
 #endif
 #define ABS16(v) ((uint16_t)((v) < 0 ? -(v) : (v)))
 
-static const uint16_t score_tab[11] = { 100, 200, 400, 500, 800, 1000, 2000, 4000, 5000, 8000, 0 };
+/* in fifties (see add_score): 100 200 400 500 800 1000 2000 4000 5000 8000 */
+static const uint8_t score_tab[11] = { 2, 4, 8, 10, 16, 20, 40, 80, 100, 160, 0 };
 
 /* solid cells: ground .. tubes, and the comet launcher */
 static const uint8_t solid_tab[T_COUNT] = {
@@ -143,6 +144,8 @@ HELPER Fx *fx_new(uint8_t kind)
         for (i = 0; i < MAX_FX; i++)
             if (w->fx[i].kind != FX_BUMP) break;
         if (i == MAX_FX) return 0;
+    } else {
+        w->n_fx++;
     }
     memset(&w->fx[i], 0, sizeof(Fx));
     w->fx[i].kind = kind;
@@ -151,34 +154,48 @@ HELPER Fx *fx_new(uint8_t kind)
 
 /* The score is kept twice: as a number, and as 7 decimal digits for the HUD (the Game Boy has
    no divide, and turning a 32-bit number into digits every frame is far too slow). */
-HELPER void add_score(uint16_t pts)
+HELPER void add_score(uint8_t k)    /* k fifties: every award is a multiple of 50, under 10,000 */
 {
-    uint8_t add[7], i, carry;
-    /* the cap is 9,999,999: only look closer once the top digit is a 9 */
-    if (w->sdig[0] == 9 && w->score + pts > 9999999UL) {
-        w->score = 9999999UL;
-        for (i = 0; i < 7; i++) w->sdig[i] = 9;
-        w->score_rev++;
-        return;
+    SST uint8_t *d;
+    SST uint8_t v, c, h, th;
+    SST uint16_t pts;
+    pts = (uint16_t)((uint16_t)k << 1);                    /* k * 50 = k * 2 + k * 16 + k * 32 */
+    pts = (uint16_t)(pts + (pts << 3) + (pts << 4));
+    /* the digits to add: tens 0 or 5, then k / 2 hundreds; a decimal add from the tens up,
+       stopping as soon as nothing is carried */
+    h = (uint8_t)(k >> 1);
+    th = 0;
+    while (h >= 10) { h -= 10; th++; }
+    d = &w->sdig[5];
+    c = 0;
+    if (k & 1) {
+        v = (uint8_t)(*d + 5);
+        if (v >= 10) { v -= 10; c = 1; }
+        *d = v;
+    }
+    d--;
+    v = (uint8_t)(*d + h + c);
+    c = 0;
+    if (v >= 10) { v -= 10; c = 1; }
+    *d = v;
+    d--;
+    v = (uint8_t)(*d + th + c);
+    c = 0;
+    if (v >= 10) { v -= 10; c = 1; }
+    *d = v;
+    while (c) {
+        if (d == w->sdig) {                                /* past 9,999,999: the cap */
+            for (v = 0; v < 7; v++) w->sdig[v] = 9;
+            w->score = 9999999UL;
+            w->score_rev++;
+            return;
+        }
+        d--;
+        v = (uint8_t)(*d + 1);
+        if (v >= 10) v = 0; else c = 0;
+        *d = v;
     }
     w->score += pts;
-    /* pts (< 10000) to digits by subtraction, then a decimal add from the lowest digit that
-       changes, stopping as soon as nothing is carried */
-    add[0] = add[1] = add[2] = add[3] = add[4] = add[5] = 0;
-    while (pts >= 1000) { pts -= 1000; add[3]++; }
-    while (pts >= 100) { pts -= 100; add[4]++; }
-    while (pts >= 10) { pts -= 10; add[5]++; }
-    add[6] = (uint8_t)pts;
-    i = 6;
-    while (i > 3 && !add[i]) i--;
-    carry = 0;
-    for (;;) {
-        uint8_t v = (uint8_t)(w->sdig[i] + carry + add[i]);
-        carry = (uint8_t)(v >= 10);
-        w->sdig[i] = (uint8_t)(carry ? v - 10 : v);
-        if (!i || (i <= 3 && !carry)) break;
-        i--;
-    }
     w->score_rev++;
 }
 
@@ -208,7 +225,7 @@ HELPER void count_coin(void)
 
 HELPER void get_coin(void)
 {
-    add_score(200);
+    add_score(4);
     count_coin();
 }
 
@@ -217,7 +234,7 @@ HELPER void coin_pop(uint16_t col, uint8_t row)
     Fx *f = fx_new(FX_COIN);
     count_coin();                       /* the pop-up awards the 200 when it lands */
     if (f) { f->x = (uint16_t)(col * 16 + 4); f->y = (int16_t)(row * 16 - 16); f->vy = -6; f->t = 0; }
-    else add_score(200);
+    else add_score(4);
 }
 
 /* ------------------------------------------------------------------ entities */

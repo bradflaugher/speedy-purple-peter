@@ -338,6 +338,22 @@ static void test_mechanics(void)
     CHECK(W.e[0].state == ES_FLAT && W.pvy < 0 && W.score == s0 + 100, "stomp: state %u vy %d", W.e[0].state, W.pvy);
     CHECK(W.lives == START_LIVES && W.pstate == PS_PLAY, "a stomp does not hurt");
 
+    /* two Gloops walking into each other turn around (and never pass through each other) */
+    bench();
+    W.px = 0;
+    ents_spawn(5, SPAWN(SP_GLOOP, GROUND_ROW - 1));
+    ents_spawn(8, SPAWN(SP_GLOOP, GROUND_ROW - 1));
+    W.e[0].vx = 0x80;
+    {
+        int turned = 0;
+        for (i = 0; i < 200; i++) {
+            step(0);
+            CHECK((int16_t)(W.e[1].x - W.e[0].x) > 6, "gloops overlap by too much (%d)", (int16_t)(W.e[1].x - W.e[0].x));
+            if (W.e[0].vx < 0 && W.e[1].vx > 0) turned = 1;
+        }
+        CHECK(turned, "the gloops turned around");
+    }
+
     /* walking into a Gloop hurts: big shrinks (and blinks), small dies */
     bench();
     W.power = PW_BIG;
@@ -428,12 +444,36 @@ static void test_mechanics(void)
         sim_init(0xBEEF);
         for (i = 0; i < 3000; i++) sim_step((uint8_t)((i % 50 < 30 ? K_A : 0) | K_RIGHT | K_B));
         CHECK(!memcmp(&a, &W, sizeof(World)), "determinism");
+        {   /* the effects counter is right */
+            int k, n = 0;
+            for (k = 0; k < MAX_FX; k++) n += W.fx[k].kind != 0;
+            CHECK(n == W.n_fx, "n_fx %u vs %d", W.n_fx, n);
+        }
         {   /* the HUD's score digits always spell the score */
             uint32_t v = 0;
             int k;
             for (k = 0; k < 7; k++) v = v * 10 + W.sdig[k];
             CHECK(v == W.score && W.score > 0, "score digits %lu vs %lu", (unsigned long)v, (unsigned long)W.score);
         }
+    }
+
+    /* the score stops at 9,999,999 (a star bit at 9,999,900 would make it 10,000,100) */
+    {
+        static const uint8_t d[7] = { 9, 9, 9, 9, 9, 0, 0 };
+        static const uint8_t cap[7] = { 9, 9, 9, 9, 9, 9, 9 };
+        uint8_t rev;
+        bench();
+        W.score = 9999900UL;
+        memcpy(W.sdig, d, 7);
+        rev = W.score_rev;
+        cell(4, GROUND_ROW - 1, T_COIN);
+        step(0);
+        CHECK(W.score == 9999999UL && !memcmp(W.sdig, cap, 7) && W.score_rev != rev,
+              "score cap %lu", (unsigned long)W.score);
+        cell(5, GROUND_ROW - 1, T_COIN);
+        W.px = 5 * 16;
+        step(0);
+        CHECK(W.score == 9999999UL && !memcmp(W.sdig, cap, 7), "score stays capped %lu", (unsigned long)W.score);
     }
 }
 

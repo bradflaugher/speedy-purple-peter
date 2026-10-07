@@ -4,16 +4,12 @@
 #endif
 #include "sim_int.h"
 
-#if defined(__SDCC)
+#if defined(__SDCC) && defined(SPP_PROFILE)       /* profiling stamps (see sim_int.h) */
 extern uint8_t dbg_ent_ly[MAX_ENTS];
 static uint8_t ent_ly0;
-uint16_t dbg_fast_hits;
-#define FAST_HIT() (dbg_fast_hits++)
 #define ENT_PROF_A() (ent_ly0 = *(volatile uint8_t *)0xFF44)
 #define ENT_PROF_B(i) (dbg_ent_ly[i] = (uint8_t)(*(volatile uint8_t *)0xFF44 - ent_ly0))
 #else
-uint16_t dbg_fast_hits;
-#define FAST_HIT() (dbg_fast_hits++)
 #define ENT_PROF_A() ((void)0)
 #define ENT_PROF_B(i) ((void)0)
 #endif
@@ -52,68 +48,178 @@ void ents_spawn(uint16_t col, uint8_t sp) SIM_BANKED
 }
 
 /* ------------------------------------------------------------------ the entity being updated
- * cur is the entity being updated (a global, so the helpers below need no parameter). */
+ * The entity being updated is copied out of its slot into E, a plain global, and back: SDCC
+ * reaches a global's fields directly, while every access through a pointer costs an address
+ * calculation (the copy is 16 bytes in assembly). cur is the slot. */
+static Ent E;
 static Ent *cur;
+static Ent *act[MAX_ENTS];          /* this frame's live entities (after their update) */
+static uint8_t n_act;
 static Ent *const slots = &W.e[0];  /* (W.e itself is out of reach under the macro below) */
-#define e cur
+
+typedef char ent_is_16_bytes[sizeof(Ent) == 16 ? 1 : -1];   /* ent_copy copies 16 */
+
+#if defined(__SDCC) && defined(__PORT_sm83)
+static void ent_copy(void *dst, const void *src) __naked     /* 16 bytes; dst in DE, src in BC */
+{
+    (void)dst; (void)src;
+    __asm
+        ld  h, b
+        ld  l, c
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ret
+    __endasm;
+}
+#else
+static void ent_copy(void *dst, const void *src) { memcpy(dst, src, sizeof(Ent)); }
+#endif
+/* a bit (1 << slot) for every used slot whose x is in [x0, x0 + 30]: the cheap first test of a
+   16x16 box overlap (x0 = x - 15) */
+#if defined(__SDCC) && defined(__PORT_sm83)
+static uint8_t near_t;
+static uint8_t near_x(const Ent *s, uint16_t x0) __naked     /* s in DE, x0 in BC; result in A */
+{
+    (void)s; (void)x0;
+    __asm
+        ld  h, d
+        ld  l, e
+        ld  de, #0x0100             ; d = the slot bit, e = the result
+    1$:
+        push hl
+        ld  a, (hl+)                ; kind
+        or  a, a
+        jr  z, 2$
+        inc hl
+        ld  a, (hl+)                ; x - x0, wanted in 0..30
+        sub a, c
+        ld  (_near_t), a
+        ld  a, (hl)
+        sbc a, b
+        jr  nz, 2$
+        ld  a, (_near_t)
+        cp  a, #31
+        jr  nc, 2$
+        ld  a, e
+        or  a, d
+        ld  e, a
+    2$:
+        pop hl
+        ld  a, l
+        add a, #16
+        ld  l, a
+        jr  nc, 3$
+        inc h
+    3$:
+        sla d
+        bit 6, d                    ; six slots
+        jr  z, 1$
+        ld  a, e
+        ret
+    __endasm;
+}
+#else
+static uint8_t near_x(const Ent *s, uint16_t x0)
+{
+    uint8_t i, m = 0;
+    for (i = 0; i < MAX_ENTS; i++)
+        if (s[i].kind && (uint16_t)(s[i].x - x0) <= 30) m |= (uint8_t)(1 << i);
+    return m;
+}
+#endif
+#define e (&E)
 
 /* gravity, walls and floors for walkers and items (16x16 box); returns 1 if it hit a wall */
-/* The fields ent_physics works on, loaded into plain globals once and stored back once: SDCC
-   reaches a global directly, while every access through a pointer costs an address calculation. */
-static uint16_t px_;
-static int16_t py_, pvx, pvy;
-static uint8_t pxs, pys, pground;
-
 static uint8_t ent_physics(int16_t grav, int16_t maxfall)
 {
     SST uint8_t wall, xl, slow;
     SST int16_t sum, oldfeet, fy, top;
-    Ent *o = cur;
-    px_ = o->x; py_ = o->y; pvx = o->vx; pvy = o->vy; pxs = o->xs; pys = o->ys; pground = o->ground;
     wall = 0;
-    sum = (int16_t)((int16_t)pxs + pvx);
-    px_ = (uint16_t)(px_ + (sum >> 8));
-    pxs = (uint8_t)sum;
+    sum = (int16_t)((int16_t)e->xs + e->vx);
+    e->x = (uint16_t)(e->x + (sum >> 8));
+    e->xs = (uint8_t)sum;
     /* A slow mover (at most 1 px a frame) steps through every x, so a probe point can only enter a
        new cell at one value of x & 15: the level is only looked at then (it does not change under a
        walker, except by a bump, which knocks the walker out anyway). */
-    xl = (uint8_t)((uint8_t)px_ & 15);
-    slow = (uint8_t)(pvx <= 0x100 && pvx >= -0x100);
-    if (pvx > 0) {
-        if ((!slow || xl == 2) && solid_px((uint16_t)(px_ + 14), (int16_t)(py_ + 8))) {
-            px_ = (uint16_t)(((px_ + 14) & ~15) - 15);
+    xl = (uint8_t)((uint8_t)e->x & 15);
+    slow = (uint8_t)(e->vx <= 0x100 && e->vx >= -0x100);
+    if (e->vx > 0) {
+        if ((!slow || xl == 2) && solid_px((uint16_t)(e->x + 14), (int16_t)(e->y + 8))) {
+            e->x = (uint16_t)(((e->x + 14) & ~15) - 15);
             wall = 1;
         }
-    } else if (pvx < 0) {
-        if ((!slow || xl == 14) && solid_px((uint16_t)(px_ + 1), (int16_t)(py_ + 8))) {
-            px_ = (uint16_t)(((px_ + 1) & ~15) + 15);
+    } else if (e->vx < 0) {
+        if ((!slow || xl == 14) && solid_px((uint16_t)(e->x + 1), (int16_t)(e->y + 8))) {
+            e->x = (uint16_t)(((e->x + 1) & ~15) + 15);
             wall = 1;
         }
     }
-    if (pground && slow && !wall && xl != 13 && xl != 4) {   /* still on the same cells */
-        o->x = px_; o->xs = pxs;
-        return 0;
+    if (e->ground && slow && !wall && xl != 13 && xl != 4) return 0;   /* still on the same cells */
+    if (!e->ground) {
+        e->vy = (int16_t)(e->vy + grav);
+        if (e->vy > maxfall) e->vy = maxfall;
     }
-    if (!pground) {
-        pvy = (int16_t)(pvy + grav);
-        if (pvy > maxfall) pvy = maxfall;
-    }
-    oldfeet = (int16_t)(py_ + 16);
-    sum = (int16_t)((int16_t)pys + pvy);
-    py_ = (int16_t)(py_ + (sum >> 8));
-    pys = (uint8_t)sum;
-    fy = (int16_t)(py_ + 16);
+    oldfeet = (int16_t)(e->y + 16);
+    sum = (int16_t)((int16_t)e->ys + e->vy);
+    e->y = (int16_t)(e->y + (sum >> 8));
+    e->ys = (uint8_t)sum;
+    fy = (int16_t)(e->y + 16);
     top = (int16_t)(fy & ~15);
-    if (pvy >= 0 && fy >= 0 && oldfeet <= top + 1 &&
-        (solid_px((uint16_t)(px_ + 3), fy) || solid_px((uint16_t)(px_ + 12), fy))) {
-        py_ = (int16_t)(top - 16);
-        pvy = 0;
-        pys = 0;
-        pground = 1;
+    if (e->vy >= 0 && fy >= 0 && oldfeet <= top + 1 &&
+        (solid_px((uint16_t)(e->x + 3), fy) || solid_px((uint16_t)(e->x + 12), fy))) {
+        e->y = (int16_t)(top - 16);
+        e->vy = 0;
+        e->ys = 0;
+        e->ground = 1;
     } else {
-        pground = 0;
+        e->ground = 0;
     }
-    o->x = px_; o->y = py_; o->vy = pvy; o->xs = pxs; o->ys = pys; o->ground = pground;
     return wall;
 }
 
@@ -124,13 +230,13 @@ static void ent_kill_by(Ent *e, uint8_t step, int8_t dir)
     ent_flip(e, dir);
     w->sfx |= EV_KICK;
 }
-#define e cur
+#define e (&E)
 
 static void update_ent(void)
 {
     SST int16_t sx;
     sx = (int16_t)(e->x - w->cam_x);
-    if (sx < -48 || sx > 272 || e->y > LV_ROWS * 16 + 32) { e->kind = E_NONE; return; }
+    if ((uint16_t)(sx + 48) > 48 + 272 || e->y > LV_ROWS * 16 + 32) { e->kind = E_NONE; return; }
 
     if (e->state == ES_FLAT) {
         if (!--e->t) e->kind = E_NONE;
@@ -182,43 +288,21 @@ static void update_ent(void)
                 e->vx = (int16_t)(w->px - e->x) < 0 ? -0x80 : 0x80;
             }
         } else {                                           /* sliding: knock others over */
-            Ent *o;
-            for (o = slots; o != slots + MAX_ENTS; o++) {
-                if (o == cur || !is_enemy(o->kind) || o->kind == E_CHOMP || o->state != ES_LIVE) continue;
-                if (overlap((int16_t)e->x, e->y, (int16_t)(e->x + 15), (int16_t)(e->y + 15),
-                            (int16_t)o->x, o->y, (int16_t)(o->x + 15), (int16_t)(o->y + 15))) {
+            SST Ent *o;
+            SST uint8_t m;
+            m = near_x(slots, (uint16_t)(e->x - 15));    /* the boxes (16x16) overlap */
+            for (o = slots; m; o++, m >>= 1) {
+                if (!(m & 1) || o == cur) continue;
+                if (!is_enemy(o->kind) || o->kind == E_CHOMP || o->state != ES_LIVE) continue;
+                if ((uint16_t)(o->y - e->y + 15) <= 30) {
                     ent_kill_by(o, (uint8_t)(SC_500 + e->chain), e->vx > 0 ? 1 : -1);
                     if (e->chain < SC_1UP - SC_500) e->chain++;
                 }
             }
         }
         break;
-    case E_CHOMP: {
-        int16_t mouth = (int16_t)(e->chain * 16);
-        switch (e->t2) {
-        case 0:                                            /* hidden */
-            e->y = mouth;
-            if (e->t) e->t--;
-            if (!e->t) {
-                int16_t d = (int16_t)(w->px + 8 - (e->x + 8));
-                if (d > 28 || d < -28) e->t2 = 1;
-                else e->t = 8;
-            }
-            break;
-        case 1:                                            /* rising */
-            e->y--;
-            if (e->y <= mouth - 24) { e->t2 = 2; e->t = 60; }
-            break;
-        case 2:                                            /* up, biting */
-            if (!--e->t) e->t2 = 3;
-            break;
-        default:                                           /* sinking */
-            e->y++;
-            if (e->y >= mouth) { e->t2 = 0; e->t = 60; }
-        }
-        e->ys++;                                           /* bite animation clock */
+    case E_CHOMP:                                          /* (see chomp_step) */
         break;
-    }
     case E_COMET: {
         int16_t sum = (int16_t)((int16_t)e->xs + e->vx);
         e->x = (uint16_t)(e->x + (sum >> 8));
@@ -248,37 +332,41 @@ static void update_ent(void)
 
 #undef e
 
-/* walkers turn around when they bump into each other (checked on even frames: they move half a
-   pixel a frame, so a frame late is invisible, and it halves the cost of a crowded screen) */
+/* Walkers turn around when they bump into each other. Each frame two of the six slots are
+   checked against the rest, so every walker is looked at every third frame: they move half a pixel
+   a frame, so a turn a frame or two late is invisible, and a crowd costs a few checks a frame. */
+static void bump_one(Ent *a)
+{
+    Ent *b;
+    int16_t dx, dy;
+    if (!(a->state == ES_LIVE && (is_walker(a->kind) || ((a->kind == E_SHELL || a->kind == E_SHELL_RED) && !a->vx))))
+        return;
+    uint8_t i;
+    for (i = 0; i < n_act; i++) {
+        b = act[i];
+        if (b == a || !b->kind) continue;
+        dx = (int16_t)(b->x - a->x);
+        if (dx > 14 || dx < -14) continue;
+        if (!is_walker(a->kind) && !is_walker(b->kind)) continue;     /* two resting pods */
+        if (!(is_walker(b->kind) || ((b->kind == E_SHELL || b->kind == E_SHELL_RED) && !b->vx))) continue;
+        if (b->state != ES_LIVE) continue;
+        dy = (int16_t)(b->y - a->y);
+        if (dy > 14 || dy < -14) continue;
+        if (dx >= 0) { if (a->vx > 0) a->vx = (int16_t)-a->vx; if (b->vx < 0) b->vx = (int16_t)-b->vx; }
+        else { if (a->vx < 0) a->vx = (int16_t)-a->vx; if (b->vx > 0) b->vx = (int16_t)-b->vx; }
+    }
+}
+
 static void ent_bumps(void)
 {
-    SST Ent *list[MAX_ENTS];
-    SST uint8_t n, i, j;
-    SST Ent *a, *b;
-    SST int16_t dx, dy;
-    if (w->frames & 1) return;
-    n = 0;
-    for (a = w->e; a != w->e + MAX_ENTS; a++)
-        if (a->state == ES_LIVE && (is_walker(a->kind) || ((a->kind == E_SHELL || a->kind == E_SHELL_RED) && !a->vx)))
-            list[n++] = a;
-    for (i = 0; i + 1 < n; i++) {
-        a = list[i];
-        for (j = (uint8_t)(i + 1); j < n; j++) {
-            b = list[j];
-            if (!is_walker(a->kind) && !is_walker(b->kind)) continue;     /* two resting pods */
-            dx = (int16_t)(b->x - a->x);
-            if (dx > 14 || dx < -14) continue;
-            dy = (int16_t)(b->y - a->y);
-            if (dy > 14 || dy < -14) continue;
-            if (dx >= 0) { if (a->vx > 0) a->vx = (int16_t)-a->vx; if (b->vx < 0) b->vx = (int16_t)-b->vx; }
-            else { if (a->vx < 0) a->vx = (int16_t)-a->vx; if (b->vx > 0) b->vx = (int16_t)-b->vx; }
-        }
-    }
+    if (++w->bump_i >= MAX_ENTS / 2) w->bump_i = 0;
+    bump_one(&w->e[w->bump_i]);
+    bump_one(&w->e[w->bump_i + MAX_ENTS / 2]);
 }
 
 static void peter_vs_ents(void)
 {
-    SST uint8_t h;
+    SST uint8_t h, i;
     SST Ent *e;
     SST int16_t px0, px1, py0, py1, feet, ex, top;
     h = (uint8_t)(w->power && !w->duck ? 32 : 16);
@@ -287,8 +375,9 @@ static void peter_vs_ents(void)
     py0 = (int16_t)(w->py + (w->power ? 32 : 16) - h + 4);
     py1 = (int16_t)(w->py + (w->power ? 32 : 16) - 1);
     feet = (int16_t)(py1 + 1);
-    for (e = w->e; e != w->e + MAX_ENTS; e++) {
-        if (!e->kind || e->kind == E_CANNON || e->state != ES_LIVE) continue;
+    for (i = 0; i < n_act; i++) {
+        e = act[i];
+        if (e->kind == E_CANNON || e->state != ES_LIVE) continue;
         ex = (int16_t)(e->x - w->px);
         if (ex > 20 || ex < -20) continue;                  /* far apart: the cheap test */
         ex = (int16_t)(e->x - w->cam_x);
@@ -362,13 +451,15 @@ static void update_item(void)
             if (e->kind == E_NOVA) { e->vy = -0x300; }
         }
     } else if (e->kind != E_BLASTER) {
-        cur = e;                                           /* ent_physics works on cur */
-        if (e->kind == E_NOVA) {
-            if (ent_physics(0x30, 0x400)) e->vx = (int16_t)-e->vx;
-            if (e->ground) { e->vy = -0x480; e->ground = 0; }
+        ent_copy(&E, e);                                   /* ent_physics works on E */
+        cur = e;
+        if (E.kind == E_NOVA) {
+            if (ent_physics(0x30, 0x400)) E.vx = (int16_t)-E.vx;
+            if (E.ground) { E.vy = -0x480; E.ground = 0; }
         } else if (ent_physics(0x60, 0x400)) {
-            e->vx = (int16_t)-e->vx;
+            E.vx = (int16_t)-E.vx;
         }
+        ent_copy(e, &E);
     }
     if (w->pstate != PS_PLAY) return;
     h = sim_peter_h();
@@ -403,6 +494,7 @@ static void update_item(void)
 static void update_shots(void)
 {
     Ent *s, *e;
+    if (!w->shot[0].kind && !w->shot[1].kind) return;
     for (s = w->shot; s != w->shot + MAX_SHOTS; s++) {
         int16_t sum, sx;
         Fx *f;
@@ -446,9 +538,12 @@ static void update_shots(void)
 
 static void update_fx(void)
 {
-    Fx *f;
+    SST Fx *f;
+    SST uint8_t left;
     static const int8_t bump_dy[9] = { -2, -4, -5, -6, -5, -4, -2, -1, 0 };
-    for (f = w->fx; f != w->fx + MAX_FX; f++) {
+    left = w->n_fx;                                        /* stop after the last one */
+    if (!left) return;
+    for (f = w->fx;; f++) {
         if (!f->kind) continue;
         switch (f->kind) {
         case FX_COIN:
@@ -457,32 +552,34 @@ static void update_fx(void)
             if (++f->t >= 12) {
                 uint16_t x = f->x;
                 int16_t y = f->y;
-                f->kind = FX_NONE;
+                f->kind = FX_NONE; w->n_fx--;
                 award(SC_200, x, y);
+                /* (its pop-up takes the first free slot: this one or an earlier one) */
             }
             break;
         case FX_SCORE:
             if (f->t > 10) f->y--;
-            if (!--f->t) f->kind = FX_NONE;
+            if (!--f->t) { f->kind = FX_NONE; w->n_fx--; }
             break;
         case FX_SHARD:
             f->x = (uint16_t)(f->x + f->vx);
             f->y = (int16_t)(f->y + f->vy);
             if (++f->t & 1) f->vy++;
-            if (f->y > LV_ROWS * 16 + 16) f->kind = FX_NONE;
+            if (f->y > LV_ROWS * 16 + 16) { f->kind = FX_NONE; w->n_fx--; }
             break;
         case FX_PUFF:
-            if (!--f->t) f->kind = FX_NONE;
+            if (!--f->t) { f->kind = FX_NONE; w->n_fx--; }
             break;
         case FX_BUMP:
             f->vy = bump_dy[f->t];
             if (++f->t >= 9) {
                 uint16_t col = (uint16_t)(f->x >> 4);
-                f->kind = FX_NONE;
+                f->kind = FX_NONE; w->n_fx--;
                 mark(col, f->row);
             }
             break;
         }
+        if (!--left) break;
     }
 }
 
@@ -512,10 +609,40 @@ void ents_bump_above(uint16_t col, uint8_t row) SIM_BANKED
     }
 }
 
+/* a Moon Chomper: hidden in its tube until Peter is not right next to it, then up, bite, down.
+   Simple enough to be done in place (see ents_update). */
+static void chomp_step(Ent *e)
+{
+    int16_t mouth = (int16_t)(e->chain * 16);
+    switch (e->t2) {
+    case 0:                                            /* hidden */
+        e->y = mouth;
+        if (e->t) e->t--;
+        if (!e->t) {
+            int16_t d = (int16_t)(w->px + 8 - (e->x + 8));
+            if (d > 28 || d < -28) e->t2 = 1;
+            else e->t = 8;
+        }
+        break;
+    case 1:                                            /* rising */
+        e->y--;
+        if (e->y <= mouth - 24) { e->t2 = 2; e->t = 60; }
+        break;
+    case 2:                                            /* up, biting */
+        if (!--e->t) e->t2 = 3;
+        break;
+    default:                                           /* sinking */
+        e->y++;
+        if (e->y >= mouth) { e->t2 = 0; e->t = 60; }
+    }
+    e->ys++;                                           /* bite animation clock */
+}
+
 void ents_update(void) SIM_BANKED
 {
     Ent *e;
     uint8_t n = 0;
+    n_act = 0;
     PROF(5);
     for (e = w->e; e != w->e + MAX_ENTS; e++)
         if (e->kind) {
@@ -532,14 +659,23 @@ void ents_update(void) SIM_BANKED
                     e->x = nx;
                     e->xs = (uint8_t)(sum & 0xFF);
                     e->t++;
-                    FAST_HIT();
+                    act[n_act++] = e;
                     continue;
                 }
             }
+            if (e->kind == E_CHOMP && e->state == ES_LIVE
+                && (uint16_t)((int16_t)(e->x - w->cam_x) + 48) <= 48 + 272) {
+                chomp_step(e);
+                act[n_act++] = e;
+                continue;
+            }
             ENT_PROF_A();
+            ent_copy(&E, e);
             cur = e;
             update_ent();
+            ent_copy(e, &E);
             ENT_PROF_B(e - w->e);
+            if (e->kind) act[n_act++] = e;
         }
     w->n_ents = n;
     PROF(6);

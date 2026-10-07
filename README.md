@@ -107,9 +107,10 @@ PETER     *x07   ^276        star bits, time left
 
 ## Under the hood
 
-The game is C (GBDK-2020 4.3, SDCC) with a few lines of SM83 assembly in the hottest spot. The
-cartridge is **MBC5 + RAM + battery**, 64 KB, CGB-enhanced: colour and double speed on a Game Boy
-Color, and fully playable on a 1989 DMG.
+The game is C (GBDK-2020 4.3, SDCC) with a few small SM83 assembly routines in the hottest
+spots. The cartridge is **MBC5 + RAM + battery**, 64 KB, CGB-enhanced: colour and double speed on
+a Game Boy Color, and fully playable on a 1989 DMG. It runs at a steady 60 fps: over 66,000 test
+frames per machine, the Game Boy Color never misses one and the DMG misses 2.
 
 ```
 src/core/   the game itself, portable C (SDCC for the Game Boy, gcc for the tests and tools)
@@ -152,7 +153,8 @@ make rom          # -> build/speedy-purple-peter.gb (+ .sym)
 make test         # everything below
 make test-host    # physics, generator, mechanics and the search bot; the sound engine
 make test-assets  # the asset pipeline
-make test-rom     # PyBoy on DMG + CGB: the ROM plays exactly like the host, title, pause, save
+make test-rom     # PyBoy on DMG + CGB: the ROM plays exactly like the host (8 seeds), the frame
+                  # budget, title, pause, save
 make screenshots  # regenerate docs/screens
 ```
 
