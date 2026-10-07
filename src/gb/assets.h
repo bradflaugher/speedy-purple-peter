@@ -14,9 +14,9 @@ BANKREF_EXTERN(assets)
 #endif
 
 /* ---- world BG tileset (also used by the HUD window and menus) ---- */
-#define BG_TILE_COUNT 150
+#define BG_TILE_COUNT 153
 #define BG_TILES_LO   128
-#define BG_TILES_HI   22
+#define BG_TILES_HI   25
 extern const uint8_t bg_tiles[];
 extern const uint8_t mt_tiles[T_COUNT][4];
 extern const uint8_t mt_attr[T_COUNT][4];
@@ -62,7 +62,7 @@ extern const uint8_t anim_frames[ANIM_COUNT][ANIM_FRAMES][16];
 #define SPR_CHOMP0       128   /* 16x32 */
 #define SPR_CHOMP1       136   /* 16x32 */
 #define SPR_COMET        144   /* 16x16 */
-#define SPR_PLANET       148   /* 16x16 */
+#define SPR_CELL         148   /* 16x16 */
 #define SPR_BLASTER      152   /* 16x16 */
 #define SPR_NOVA         156   /* 16x16 */
 #define SPR_1UP          160   /* 16x16 */

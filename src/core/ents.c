@@ -470,7 +470,7 @@ static void update_item(void)
         uint8_t k = e->kind;
         e->kind = E_NONE;
         switch (k) {
-        case E_PLANET:
+        case E_CELL:
             award(SC_1000, e->x, e->y);
             if (!w->power) grow(PW_BIG); else w->sfx |= EV_POWERUP;
             break;
