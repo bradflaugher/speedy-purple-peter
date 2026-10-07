@@ -58,11 +58,11 @@ OBJ_PALS = ['OPAL_PETER', 'OPAL_BLASTER', 'OPAL_GREEN', 'OPAL_RED', 'OPAL_ITEM',
 
 # name -> (w, h). Every one must be defined in sprites.txt.
 SPR_REQUIRED = {}
-for _n in ('PS_STAND', 'PS_WALK0', 'PS_WALK1', 'PS_WALK2', 'PS_SKID', 'PS_JUMP', 'PS_DEAD',
+for _n in ('PS_STAND', 'PS_WALK0', 'PS_WALK1', 'PS_WALK2', 'PS_SKID', 'PS_JUMP', 'PS_DEAD', 'PB_DASH1',
            'PB_DUCK', 'GLOOP', 'GLOOP_FLAT', 'SHELL', 'SHELL_WAKE', 'COMET', 'PLANET', 'BLASTER',
            'NOVA', '1UP', 'FLAG', 'BRICK', 'USED'):
     SPR_REQUIRED['SPR_' + _n] = (16, 16)
-for _n in ('PB_STAND', 'PB_WALK0', 'PB_WALK1', 'PB_WALK2', 'PB_SKID', 'PB_JUMP', 'DOME0',
+for _n in ('PB_STAND', 'PB_WALK0', 'PB_WALK1', 'PB_WALK2', 'PB_SKID', 'PB_JUMP', 'PB_DASH0', 'DOME0',
            'DOME1', 'CHOMP0', 'CHOMP1'):
     SPR_REQUIRED['SPR_' + _n] = (16, 32)
 for _n in ('JET0', 'JET1', 'COIN0', 'COIN1', 'COIN2', 'SHOT', 'PUFF', 'SHARD', 'N10', 'N20',

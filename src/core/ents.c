@@ -523,8 +523,8 @@ static void update_shots(void)
             ey0 = (int16_t)(e->y + 2);
             ey1 = (int16_t)(e->y + 15);
             if (e->kind == E_CHOMP) { ey1 = (int16_t)(e->chain * 16 - 1); if (ey0 > ey1) continue; }
-            if (!overlap((int16_t)s->x, s->y, (int16_t)(s->x + 7), (int16_t)(s->y + 7),
-                         (int16_t)e->x, ey0, (int16_t)(e->x + 15), ey1)) continue;
+            /* x as a wrapped distance (world x wraps at 65536): the 8 px shot meets the 16 px box */
+            if ((uint16_t)(s->x + 7 - e->x) > 22 || s->y > ey1 || (int16_t)(s->y + 7) < ey0) continue;
             if (e->kind != E_COMET)
                 ent_kill_by(e, e->kind == E_GLOOP ? SC_100 : SC_200, s->vx > 0 ? 1 : -1);
             goto puff;
@@ -554,7 +554,7 @@ static void update_fx(void)
                 uint16_t x = f->x;
                 int16_t y = f->y;
                 f->kind = FX_NONE; w->n_fx--;
-                award(SC_200, x, y);
+                score_popup(SC_200, x, y);         /* (the points came with the coin) */
                 /* (its pop-up takes the first free slot: this one or an earlier one) */
             }
             break;
@@ -602,7 +602,7 @@ void ents_bump_above(uint16_t col, uint8_t row) SIM_BANKED
         && (uint16_t)(w->item.x + 13 - bx) <= 26 && w->item.y + 16 >= top - 4 && w->item.y + 16 <= top + 4) {
         w->item.vy = -0x300;
         w->item.ground = 0;
-        if (w->item.vx) w->item.vx = (int16_t)(w->item.x + 8) >= (int16_t)(bx + 8) ? 0x100 : -0x100;
+        if (w->item.vx) w->item.vx = (int16_t)(w->item.x - bx) >= 0 ? 0x100 : -0x100;
     }
     if (row && cell_at(col, (uint8_t)(row - 1)) == T_COIN) {
         set_cell(col, (uint8_t)(row - 1), T_SKY);

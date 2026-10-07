@@ -90,7 +90,8 @@ void sim_respawn(void) SIM_BANKED
     memset(w->shot, 0, sizeof(w->shot));
     memset(w->fx, 0, sizeof(w->fx));
     w->n_fx = 0;
-    w->mc_t = 0;
+    w->mc_t = 0;                       /* a multi-coin brick starts afresh */
+    w->mc_n = 0;
     w->px = (uint16_t)(w->cam_x + 32);
     w->pxs = 0;
     w->py = GROUND_ROW * 16 - 16;
@@ -489,7 +490,8 @@ dist:
         uint16_t d = (uint16_t)((cc - w->far_col) & COLMASK);
         if (d && d < 2048) {
             w->far_col = cc;
-            w->dist = (uint16_t)(w->dist + d < w->dist ? 0xFFFF : w->dist + d);
+            d = (uint16_t)(w->dist + d);       /* (in 16 bits on every compiler, then saturate) */
+            w->dist = d < w->dist ? 0xFFFF : d;
         }
     }
 }

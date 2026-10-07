@@ -291,6 +291,7 @@ static void test_generator(void)
 static void test_mechanics(void)
 {
     int i;
+    uint16_t c;
     uint32_t s0;
 
     /* a capsule overhead: a star bit pops out, it becomes used */
@@ -470,6 +471,37 @@ static void test_mechanics(void)
     CHECK(W.shot[0].kind, "shot fired");
     for (i = 0; i < 60 && W.e[0].state == ES_LIVE; i++) step(0);
     CHECK(W.e[0].state == ES_FALL, "shot hit");
+
+    /* ... also where world x crosses 0x8000 (about 2,000 columns into a run) */
+    bench();
+    W.e[0].kind = E_GLOOP;
+    W.e[0].state = ES_LIVE;
+    W.e[0].x = 0x7FFC;
+    W.e[0].y = GROUND_ROW * 16 - 16;
+    W.e[0].ground = 1;
+    W.shot[0].kind = 1;
+    W.shot[0].x = 0x7FF6;
+    W.shot[0].y = GROUND_ROW * 16 - 12;
+    W.shot[0].vx = 0x400;
+    W.cam_x = 0x7F80;
+    W.px = 0x7FA0;
+    for (c = 0; c < LV_COLS; c++) flatten(c);
+    step(0);
+    CHECK(W.e[0].state == ES_FALL, "shot hit across 0x8000");
+
+    /* a star bit's 200 points come with the bump, so dying before it lands keeps them */
+    bench();
+    cell(4, 7, T_Q_COIN);
+    W.px = 4 * 16;
+    s0 = W.score;
+    for (i = 0; i < 30 && W.lv[4][7] != T_USED; i++) step(K_A);
+    CHECK(W.score == s0 + 200 && W.n_fx, "coin points on the bump (+%lu)", (unsigned long)(W.score - s0));
+
+    /* a multi-coin brick starts afresh after a death */
+    W.mc_n = 3;
+    W.mc_t = 100;
+    sim_respawn();
+    CHECK(W.mc_n == 0 && W.mc_t == 0, "multi-coin state reset on respawn");
 
     /* determinism: two runs with the same inputs end identically */
     {

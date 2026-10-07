@@ -34,7 +34,7 @@ extern const uint8_t anim_tile[ANIM_COUNT];
 extern const uint8_t anim_frames[ANIM_COUNT][ANIM_FRAMES][16];
 
 /* ---- sprites (8x16 OBJ mode): tile number of the top-left 8x16 object ---- */
-#define SPR_TILE_COUNT 194
+#define SPR_TILE_COUNT 206
 #define SPR_PS_STAND       0   /* 16x16 */
 #define SPR_PS_WALK0       4   /* 16x16 */
 #define SPR_PS_WALK1       8   /* 16x16 */
@@ -49,39 +49,41 @@ extern const uint8_t anim_frames[ANIM_COUNT][ANIM_FRAMES][16];
 #define SPR_PB_SKID       60   /* 16x32 */
 #define SPR_PB_JUMP       68   /* 16x32 */
 #define SPR_PB_DUCK       76   /* 16x16 */
-#define SPR_GLOOP         80   /* 16x16 */
-#define SPR_GLOOP_FLAT    84   /* 16x16 */
-#define SPR_DOME0         88   /* 16x32 */
-#define SPR_DOME1         96   /* 16x32 */
-#define SPR_SHELL        104   /* 16x16 */
-#define SPR_SHELL_WAKE   108   /* 16x16 */
-#define SPR_JET0         112   /* 8x16 */
-#define SPR_JET1         114   /* 8x16 */
-#define SPR_CHOMP0       116   /* 16x32 */
-#define SPR_CHOMP1       124   /* 16x32 */
-#define SPR_COMET        132   /* 16x16 */
-#define SPR_PLANET       136   /* 16x16 */
-#define SPR_BLASTER      140   /* 16x16 */
-#define SPR_NOVA         144   /* 16x16 */
-#define SPR_1UP          148   /* 16x16 */
-#define SPR_COIN0        152   /* 8x16 */
-#define SPR_COIN1        154   /* 8x16 */
-#define SPR_COIN2        156   /* 8x16 */
-#define SPR_SHOT         158   /* 8x16 */
-#define SPR_PUFF         160   /* 8x16 */
-#define SPR_SHARD        162   /* 8x16 */
-#define SPR_FLAG         164   /* 16x16 */
-#define SPR_BRICK        168   /* 16x16 */
-#define SPR_USED         172   /* 16x16 */
-#define SPR_N10          176   /* 8x16 */
-#define SPR_N20          178   /* 8x16 */
-#define SPR_N40          180   /* 8x16 */
-#define SPR_N50          182   /* 8x16 */
-#define SPR_N80          184   /* 8x16 */
-#define SPR_N1U          186   /* 8x16 */
-#define SPR_N0           188   /* 8x16 */
-#define SPR_N00          190   /* 8x16 */
-#define SPR_NP           192   /* 8x16 */
+#define SPR_PB_DASH0      80   /* 16x32 */
+#define SPR_PB_DASH1      88   /* 16x16 */
+#define SPR_GLOOP         92   /* 16x16 */
+#define SPR_GLOOP_FLAT    96   /* 16x16 */
+#define SPR_DOME0        100   /* 16x32 */
+#define SPR_DOME1        108   /* 16x32 */
+#define SPR_SHELL        116   /* 16x16 */
+#define SPR_SHELL_WAKE   120   /* 16x16 */
+#define SPR_JET0         124   /* 8x16 */
+#define SPR_JET1         126   /* 8x16 */
+#define SPR_CHOMP0       128   /* 16x32 */
+#define SPR_CHOMP1       136   /* 16x32 */
+#define SPR_COMET        144   /* 16x16 */
+#define SPR_PLANET       148   /* 16x16 */
+#define SPR_BLASTER      152   /* 16x16 */
+#define SPR_NOVA         156   /* 16x16 */
+#define SPR_1UP          160   /* 16x16 */
+#define SPR_COIN0        164   /* 8x16 */
+#define SPR_COIN1        166   /* 8x16 */
+#define SPR_COIN2        168   /* 8x16 */
+#define SPR_SHOT         170   /* 8x16 */
+#define SPR_PUFF         172   /* 8x16 */
+#define SPR_SHARD        174   /* 8x16 */
+#define SPR_FLAG         176   /* 16x16 */
+#define SPR_BRICK        180   /* 16x16 */
+#define SPR_USED         184   /* 16x16 */
+#define SPR_N10          188   /* 8x16 */
+#define SPR_N20          190   /* 8x16 */
+#define SPR_N40          192   /* 8x16 */
+#define SPR_N50          194   /* 8x16 */
+#define SPR_N80          196   /* 8x16 */
+#define SPR_N1U          198   /* 8x16 */
+#define SPR_N0           200   /* 8x16 */
+#define SPR_N00          202   /* 8x16 */
+#define SPR_NP           204   /* 8x16 */
 extern const uint8_t spr_tiles[];
 
 /* ---- palettes ---- */

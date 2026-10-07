@@ -207,14 +207,18 @@ HELPER void one_up(void)
 
 /* award a score step with a pop-up at (x, y) */
 
+HELPER void score_popup(uint8_t step, uint16_t x, int16_t y)
+{
+    Fx *f = fx_new(FX_SCORE);
+    if (f) { f->x = x; f->y = y; f->v = step; f->t = 40; }
+}
+
 HELPER void award(uint8_t step, uint16_t x, int16_t y)
 {
-    Fx *f;
     if (step > SC_1UP) step = SC_1UP;
     if (step == SC_1UP) one_up();
     else add_score(score_tab[step]);
-    f = fx_new(FX_SCORE);
-    if (f) { f->x = x; f->y = y; f->v = step; f->t = 40; }
+    score_popup(step, x, y);
 }
 
 HELPER void count_coin(void)
@@ -232,9 +236,8 @@ HELPER void get_coin(void)
 HELPER void coin_pop(uint16_t col, uint8_t row)
 {
     Fx *f = fx_new(FX_COIN);
-    count_coin();                       /* the pop-up awards the 200 when it lands */
+    get_coin();                         /* 200 now: dying before the coin lands keeps them */
     if (f) { f->x = (uint16_t)(col * 16 + 4); f->y = (int16_t)(row * 16 - 16); f->vy = -6; f->t = 0; }
-    else add_score(4);
 }
 
 /* ------------------------------------------------------------------ entities */

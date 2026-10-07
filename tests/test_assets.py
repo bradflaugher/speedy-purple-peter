@@ -327,6 +327,11 @@ class TestAssets(unittest.TestCase):
         # rows 11-17: plain sky for the engine's text
         for y in range(11, 18):
             self.assertEqual(tm[y * 20:y * 20 + 20], [blank] * 20, 'title row %d' % y)
+        # the logo and its streaks are all purple: never the gold HUD or pod palettes
+        for i, v in enumerate(tm):
+            if v >= 208:
+                self.assertNotIn(ta[i], (self.define('PAL_HUD'), self.define('PAL_GOLD')),
+                                 'title (%d,%d) logo tile in a gold palette' % (i % 20, i // 20))
 
     # ---- the compiler ------------------------------------------------------------------------
     @unittest.skipUnless(os.path.exists(LCC), 'GBDK not installed')

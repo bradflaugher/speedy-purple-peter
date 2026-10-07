@@ -84,7 +84,7 @@ def run(cgb, keys, grab, gif=None):
 def main():
     os.makedirs(OUT, exist_ok=True)
     keys = bot_keys(3)
-    run(True, keys, {140: 'cgb_start.png', 700: 'cgb_run.png', 1250: 'cgb_beacon.png',
+    run(True, keys, {140: 'cgb_start.png', 700: 'cgb_run.png',
                      2000: 'cgb_run2.png'}, gif=(300, 660))
     run(False, keys, {140: 'dmg_start.png', 700: 'dmg_run.png', 2000: 'dmg_run2.png'})
     print('wrote', sorted(os.listdir(OUT)))

@@ -4,7 +4,7 @@
   metatiles.png   every level cell (animated ones: all 4 frames), DMG and CGB
   sprites.png     every sprite frame on the DMG sky (white) and the CGB sky (navy)
   font.png        the font, DMG and CGB
-  title.png       the title screen, DMG and CGB
+  title.png       the title screen (Peter's two sprint poses), DMG and CGB
   scene.png       a mock level screen with Peter and friends, DMG and CGB
 
 Images are scaled 3x (``--scale``). Usage: python3 tools/preview_assets.py [--out DIR]
@@ -108,8 +108,16 @@ def sprite_pixels(d, name):
     raise KeyError(name)
 
 
+def dash_pixels(d, pose):
+    """the title's sprint: DASH0's top half over DASH0's (pose 0) or DASH1's (pose 1) legs"""
+    top = sprite_pixels(d, 'SPR_PB_DASH0')
+    return top[:16] + (sprite_pixels(d, 'SPR_PB_DASH1') if pose else top[16:])
+
+
 def draw_sprite(img, x, y, d, name, P, pal=None, flip=False):
-    px = sprite_pixels(d, name)
+    px = dash_pixels(d, 1) if name == 'DASH1' else sprite_pixels(d, name)
+    if name == 'DASH1':
+        name = 'SPR_PB_DASH0'
     pal = P.obj[spr_pal(name) if pal is None else pal]
     w = len(px[0])
     for yy, row in enumerate(px):
@@ -151,12 +159,12 @@ def sheet_peter(d, P):
     small = ['SPR_PS_STAND', 'SPR_PS_WALK0', 'SPR_PS_WALK1', 'SPR_PS_WALK2', 'SPR_PS_SKID',
              'SPR_PS_JUMP', 'SPR_PS_DEAD']
     big = ['SPR_PB_STAND', 'SPR_PB_WALK0', 'SPR_PB_WALK1', 'SPR_PB_WALK2', 'SPR_PB_SKID',
-           'SPR_PB_JUMP', 'SPR_PB_DUCK']
-    img = Image.new('RGB', (8 * 20 + 4, 4 * 36 + 4), P.sky)
+           'SPR_PB_JUMP', 'SPR_PB_DUCK', 'SPR_PB_DASH0', 'DASH1']
+    img = Image.new('RGB', (9 * 20 + 4, 4 * 36 + 4), P.sky)
     for r, (frames, pal, flip) in enumerate(((small, 0, False), (big, 0, False),
                                              (big, 1, False), (small, 0, True))):
         for i, n in enumerate(frames):
-            h = 32 if n.startswith('SPR_PB') and n != 'SPR_PB_DUCK' else 16
+            h = 32 if n == 'DASH1' or (n.startswith('SPR_PB') and n != 'SPR_PB_DUCK') else 16
             draw_sprite(img, 4 + i * 20, 4 + r * 36 + (32 - h), d, n, P, pal, flip)
     return img
 
@@ -183,16 +191,21 @@ def draw_text(img, d, P, x, y, s, pal=6):
         put_tile(img, x + i * 8, y, d['bg'][idx], P.bg[pal])
 
 
-def screen_title(d, P):
+def screen_title(d, P, pose=0):
     img = Image.new('RGB', (160, 144), P.sky)
     for y in range(18):
         for x in range(20):
             put_tile(img, x * 8, y * 8, tile_by_number(d, d['title_map'][y][x]),
                      P.bg[d['title_attr'][y][x]])
-    draw_text(img, d, P, 5 * 8, 13 * 8, 'PRESS START')
-    draw_text(img, d, P, 3 * 8, 15 * 8, 'SEED 1A2B BEST')
-    draw_text(img, d, P, 6 * 8, 16 * 8, '0012340')
-    draw_sprite(img, 2 * 8 + 4, 9 * 8 - 32 + 8, d, 'SPR_PB_WALK0', P)
+    # the engine's text and Peter, where title_screen() (src/gb/screens.c) puts them
+    draw_text(img, d, P, 4 * 8, 12 * 8, 'PRESS START')
+    draw_text(img, d, P, 3 * 8, 14 * 8, 'SEED 1985 SEL:NEW')
+    draw_text(img, d, P, 3 * 8, 16 * 8, 'BEST 0012340')
+    draw_text(img, d, P, 8 * 8, 17 * 8, '01234M')
+    if pose:                    # the trail's tail flickers with his stride
+        for y in (5, 6):
+            put_tile(img, 0, y * 8, G.BLANK, P.bg[0])
+    draw_sprite(img, 16, 40, d, 'DASH1' if pose else 'SPR_PB_DASH0', P)
     return img
 
 
@@ -263,7 +276,8 @@ def main(argv=None):
         'sprites.png': side_by_side(sheet_sprites(d, Pd), sheet_sprites(d, Pc)),
         'peter.png': side_by_side(sheet_peter(d, Pd), sheet_peter(d, Pc)),
         'font.png': side_by_side(sheet_font(d, Pd), sheet_font(d, Pc)),
-        'title.png': side_by_side(screen_title(d, Pd), screen_title(d, Pc)),
+        'title.png': side_by_side(screen_title(d, Pd), screen_title(d, Pd, 1),
+                                  screen_title(d, Pc), screen_title(d, Pc, 1)),
         'scene.png': side_by_side(screen_level(d, Pd), screen_level(d, Pc)),
     }
     for fn, img in sorted(outs.items()):

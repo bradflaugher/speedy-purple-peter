@@ -27,7 +27,7 @@ rom: $(ROM)
 
 assets: src/gb/assets.c
 
-src/gb/assets.c src/gb/assets.h: $(wildcard assets/*.txt) tools/gen_assets.py src/core/tiles.h
+src/gb/assets.c src/gb/assets.h &: $(wildcard assets/*.txt) tools/gen_assets.py src/core/tiles.h
 	$(PYTHON) tools/gen_assets.py
 
 $(OBJ)/core_%.o: src/core/%.c $(CORE_HDR) | $(OBJ)
@@ -63,7 +63,7 @@ test-host: $(BUILD)/test_core $(BUILD)/test_sound $(BUILD)/sppgen
 test-assets:
 	$(PYTHON) -m unittest discover -s tests -p 'test_assets.py'
 
-test-rom: $(ROM)
+test-rom: $(ROM) $(BUILD)/sppgen
 	$(PYTHON) -m unittest discover -s tests -p 'test_rom.py' -v
 
 # the balance report: the search bot plays every preset seed (slow-ish)

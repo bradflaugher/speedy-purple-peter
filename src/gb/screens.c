@@ -104,10 +104,37 @@ static uint16_t rnd_seed(void)
     return s;
 }
 
+/* Peter sprints in place on the title's ground, in front of his speed streaks: a 16x32 frame of
+   four 8x16 objects, the top half always DASH0, the bottom half DASH0's stride or DASH1's high
+   knee. OPAL_PETER on CGB, OBP0 on DMG. */
+#define DASH_X (16 + 8)          /* OAM position of the top-left object (screen x 16) */
+#define DASH_Y (40 + 16)         /* screen y 40: his feet on the ground row (y 71) */
+#define DASH_PERIOD 4            /* frames per pose: a quick 2-frame run cycle */
+
+static uint8_t trail[2];          /* the trail's tail tiles (title map column 0, rows 5-6) */
+
+static void title_peter(uint8_t pose)
+{
+    uint8_t bot = pose ? SPR_PB_DASH1 : (uint8_t)(SPR_PB_DASH0 + 4);
+    uint8_t prop = is_cgb ? OPAL_PETER : 0;
+    volatile OAM_item_t *o = shadow_OAM;
+    o[0].y = DASH_Y;      o[0].x = DASH_X;     o[0].tile = SPR_PB_DASH0;       o[0].prop = prop;
+    o[1].y = DASH_Y;      o[1].x = DASH_X + 8; o[1].tile = SPR_PB_DASH0 + 2;   o[1].prop = prop;
+    o[2].y = DASH_Y + 16; o[2].x = DASH_X;     o[2].tile = bot;                o[2].prop = prop;
+    o[3].y = DASH_Y + 16; o[3].x = DASH_X + 8; o[3].tile = (uint8_t)(bot + 2); o[3].prop = prop;
+}
+
+/* the speed streak behind him flickers with his stride: its tail is there on one pose only */
+static void title_trail(uint8_t pose)
+{
+    static const uint8_t blank[2] = { TILE_BLANK, TILE_BLANK };
+    set_bkg_tiles(0, 5, 1, 2, pose ? blank : trail);
+}
+
 uint16_t title_screen(void) BANKED
 {
     char t[12];
-    uint8_t cursor = 0, blink = 0, edited = 0;
+    uint8_t cursor = 0, blink = 0, edited = 0, run = 0;
     uint16_t seed = last_seed ? last_seed : 0x1985;
     DISPLAY_OFF;
     hud_on = 0;
@@ -122,6 +149,9 @@ uint16_t title_screen(void) BANKED
     fmt_u32(t, best_dist, 5);
     t[5] = 'M'; t[6] = 0;
     print(8, 17, t);
+    far_copy(&trail[0], &title_map[5][0], 1);
+    far_copy(&trail[1], &title_map[6][0], 1);
+    title_peter(0);
     music_play(MUS_TITLE);
     DISPLAY_ON;
     for (;;) {
@@ -131,7 +161,11 @@ uint16_t title_screen(void) BANKED
         if ((blink & 16) && edited) print((uint8_t)(8 + cursor), 14, " ");
         print(13, 14, "SEL:NEW");
         wait_frame();
+        /* the pose set last frame is on screen now: its trail goes with it */
+        if (run == 0 || run == DASH_PERIOD) title_trail(run != 0);
         blink++;
+        if (++run == 2 * DASH_PERIOD) run = 0;
+        title_peter(run >= DASH_PERIOD);
         if (pressed & J_START) break;
         if (pressed & J_SELECT) { seed = rnd_seed(); sfx_play(SFX_SELECT); }
         if (pressed & J_LEFT) { cursor = (uint8_t)((cursor + 3) & 3); edited = 1; sfx_play(SFX_SELECT); }
@@ -146,6 +180,7 @@ uint16_t title_screen(void) BANKED
             sfx_play(SFX_SELECT);
         }
     }
+    sprites_clear();                         /* Peter leaves with the title */
     sfx_play(SFX_PAUSE);
     last_seed = seed;
     save_store();

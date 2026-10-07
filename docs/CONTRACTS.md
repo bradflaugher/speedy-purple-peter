@@ -83,6 +83,8 @@ Colour 0 is transparent.
 | `SPR_PS_STAND` `SPR_PS_WALK0..2` `SPR_PS_SKID` `SPR_PS_JUMP` `SPR_PS_DEAD` | 16x16 | small Peter: a little astronaut in a purple space suit with a round glass helmet (dead faces the camera, arms up) |
 | `SPR_PB_STAND` `SPR_PB_WALK0..2` `SPR_PB_SKID` `SPR_PB_JUMP` | 16x32 | big Peter |
 | `SPR_PB_DUCK` | 16x16 | big Peter crouching (drawn as the lower 16 rows of his 32 px box) |
+| `SPR_PB_DASH0` | 16x32 | the title screen's Peter, sprinting: leaning forward, long stride, toes pointing right |
+| `SPR_PB_DASH1` | 16x16 | the sprint's other pose, high knee: a lower half drawn under `SPR_PB_DASH0`'s top half |
 | `SPR_GLOOP` `SPR_GLOOP_FLAT` | 16x16 | Gloop: a one-eyed alien blob that waddles (the engine animates it by flipping), and squashed flat (bottom ~8 rows) |
 | `SPR_DOME0` `SPR_DOME1` | 16x32 | Dome-bot: a little walking robot under a glass dome (art in the bottom 24 rows), two walk frames |
 | `SPR_SHELL` `SPR_SHELL_WAKE` | 16x16 | the Dome-bot's dome pod with the robot tucked in; the same with little legs poking out (about to wake) |
@@ -134,7 +136,11 @@ extern const uint8_t title_attr[18][20];   /* CGB palettes (BG palettes above) *
 ```
 
 The title shows the logo SPEEDY PURPLE PETER. The engine prints its own text (PRESS START, the
-seed, the best score) in rows 11-17 with the font, so keep those rows plain sky or ground.
+seed, the best score) in rows 11-17 with the font, so keep those rows plain sky or ground. The engine
+also draws Peter sprinting in place (`SPR_PB_DASH0` / `SPR_PB_DASH1`, four objects, `OPAL_PETER`
+/ OBP0) at screen x 16, y 40-71 (tile columns 2-3, rows 5-8), on the ground row, and flickers the
+tail of the speed streak behind him (title map column 0, rows 5-6). The logo and its streaks are
+all purple on CGB (`PAL_SKY`, `PAL_DECOR`): no gold.
 
 ## Sound (`src/gb/sound.h`)
 
@@ -153,7 +159,7 @@ warning jingle; the main song then resumes in hurry tempo).
 
 Effects: `SFX_JUMP, SFX_JUMP_BIG, SFX_STOMP, SFX_KICK, SFX_BUMP, SFX_BREAK, SFX_COIN,
 SFX_SPROUT` (an item rises from a capsule), `SFX_POWERUP, SFX_POWERDOWN, SFX_1UP, SFX_SHOT,
-SFX_FLAG` (touching the beacon), `SFX_TICK` (one tick of the time bonus count),
+SFX_CHECKPOINT` (passing a sector checkpoint), `SFX_TICK` (one tick of the time bonus count),
 `SFX_PAUSE, SFX_LAUNCH` (a comet fires), `SFX_SELECT` (menus).
 
 All melodies are original.
