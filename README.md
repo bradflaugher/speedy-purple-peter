@@ -49,7 +49,7 @@ race your friends on identical ground: pick a seed on the title screen and share
   | --- | --- | --- |
   | **Supply pod** (the glowing hex hatch) | the "?" block | bump it from below: a star bit or a power-up |
   | **Meteorite block** | the brick | big Peter smashes it; some hide many star bits, a power-up or a supernova |
-  | **Ringed planet** | the mushroom | grow big |
+  | **Power cell** | the mushroom | grow big |
   | **Plasma flower** | the fire flower | the blaster: B fires bouncing plasma shots |
   | **Supernova** | the star | invincible for ten seconds |
   | **Star bits** | coins | 200 points; 100 of them give a life |

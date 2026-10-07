@@ -62,7 +62,7 @@ extern const uint8_t anim_frames[ANIM_COUNT][ANIM_FRAMES][16];
 #define SPR_CHOMP0       128   /* 16x32 */
 #define SPR_CHOMP1       136   /* 16x32 */
 #define SPR_COMET        144   /* 16x16 */
-#define SPR_PLANET       148   /* 16x16 */
+#define SPR_CELL         148   /* 16x16 */
 #define SPR_BLASTER      152   /* 16x16 */
 #define SPR_NOVA         156   /* 16x16 */
 #define SPR_1UP          160   /* 16x16 */

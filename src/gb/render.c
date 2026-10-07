@@ -527,7 +527,7 @@ static void draw_item(void)
     prop = k == E_NOVA ? pl_gold : pl_item;
     if (k == E_BLASTER && is_cgb && (frame_count & 4)) prop = OPAL_RED;
     if (e->state == ES_SPROUT) prop |= S_PRIORITY;
-    put2(k == E_PLANET ? SPR_PLANET : k == E_BLASTER ? SPR_BLASTER : k == E_NOVA ? SPR_NOVA : SPR_1UP, prop);
+    put2(k == E_CELL ? SPR_CELL : k == E_BLASTER ? SPR_BLASTER : k == E_NOVA ? SPR_NOVA : SPR_1UP, prop);
 }
 
 static void draw_sprites(void)

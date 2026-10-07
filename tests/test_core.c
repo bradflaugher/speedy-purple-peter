@@ -305,12 +305,12 @@ static void test_mechanics(void)
     for (i = 0; i < 60; i++) step(0);
     CHECK(W.score == s0 + 200, "coin score %lu", (unsigned long)(W.score - s0));
 
-    /* a power capsule: small Peter gets a planet, which walks; touching it makes him big */
+    /* a power capsule: small Peter gets a power cell, which walks; touching it makes him big */
     bench();
     cell(4, 7, T_Q_POWER);
     step(K_A);
     for (i = 0; i < 40; i++) step(K_A);
-    CHECK(W.item.kind == E_PLANET, "planet sprouted (%u)", W.item.kind);
+    CHECK(W.item.kind == E_CELL, "power cell sprouted (%u)", W.item.kind);
     for (i = 0; i < 300 && W.power == PW_SMALL; i++) step(K_RIGHT);
     CHECK(W.power == PW_BIG, "grew");
     /* big Peter breaks bricks, small Peter only bumps them */

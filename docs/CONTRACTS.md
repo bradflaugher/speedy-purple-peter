@@ -91,7 +91,7 @@ Colour 0 is transparent.
 | `SPR_JET0` `SPR_JET1` | 8x16 | a little jetpack flame/fin drawn at the back-top of a flying Dome-bot, two frames |
 | `SPR_CHOMP0` `SPR_CHOMP1` | 16x32 | Moon Chomper: a toothy space plant that rises from tubes, mouth open / shut |
 | `SPR_COMET` | 16x16 | Comet: a flying fireball-faced rock fired from launchers (faces right; flipped to fly left) |
-| `SPR_PLANET` | 16x16 | power-up: a little ringed planet (makes Peter big) |
+| `SPR_CELL` | 16x16 | power-up: a power cell, a slim battery with a glowing lightning bolt (makes Peter big) |
 | `SPR_BLASTER` | 16x16 | power-up: a plasma flower (gives the blaster) |
 | `SPR_NOVA` | 16x16 | power-up: a supernova star (invincible for a while) |
 | `SPR_1UP` | 16x16 | a 1UP: a little purple helmet |
@@ -122,7 +122,7 @@ BG palettes: `PAL_SKY 0, PAL_GROUND 1, PAL_BRICK 2, PAL_GOLD 3, PAL_TUBE 4, PAL_
 PAL_HUD 6, PAL_POLE 7`. Colour 0 of every BG palette is the same sky colour.
 
 OBJ palettes: `OPAL_PETER 0, OPAL_BLASTER 1` (the blaster suit), `OPAL_GREEN 2` (Gloop,
-Dome-bot, Chomper), `OPAL_RED 3` (red Dome-bot, Comet), `OPAL_ITEM 4` (planet, 1UP),
+Dome-bot, Chomper), `OPAL_RED 3` (red Dome-bot, Comet), `OPAL_ITEM 4` (power cell, flower, 1UP),
 `OPAL_GOLD 5` (star bits, nova, flag), `OPAL_FX 6` (shots, shards, score), `OPAL_BLOCK 7`
 (bumped brick / used capsule, matching the BG).
 

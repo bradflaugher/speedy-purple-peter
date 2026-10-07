@@ -73,7 +73,7 @@ enum { PS_PLAY, PS_GROW, PS_SHRINK, PS_DEAD, PS_OVER };
 /* entity kinds */
 enum {
     E_NONE, E_GLOOP, E_DOME, E_DOME_RED, E_JET, E_SHELL, E_SHELL_RED, E_CHOMP, E_COMET, E_CANNON,
-    E_PLANET, E_BLASTER, E_NOVA, E_1UP
+    E_CELL, E_BLASTER, E_NOVA, E_1UP
 };
 /* entity states */
 enum { ES_LIVE, ES_FLAT, ES_FALL, ES_SPROUT };

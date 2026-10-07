@@ -77,7 +77,7 @@ def is_anim(d, name):
 
 SPR_PAL = {
     'PS': 0, 'PB': 0, 'GLOOP': 2, 'DOME': 2, 'SHELL': 2, 'JET': 3, 'CHOMP': 2, 'COMET': 3,
-    'PLANET': 4, '1UP': 4, 'BLASTER': 4, 'NOVA': 5, 'COIN': 5, 'FLAG': 5, 'SHOT': 6,
+    'CELL': 4, '1UP': 4, 'BLASTER': 4, 'NOVA': 5, 'COIN': 5, 'FLAG': 5, 'SHOT': 6,
     'PUFF': 6, 'SHARD': 6, 'N': 6, 'BRICK': 7, 'USED': 7,
 }
 
@@ -248,7 +248,7 @@ def screen_level(d, P, frame=0):
     draw_sprite(img, 52, 96, d, 'SPR_GLOOP', P)
     draw_sprite(img, 136, 80, d, 'SPR_DOME0', P, flip=True)
     draw_sprite(img, 4, 56, d, 'SPR_COMET', P)
-    draw_sprite(img, 76, 48, d, 'SPR_PLANET', P)
+    draw_sprite(img, 76, 48, d, 'SPR_CELL', P)
     return img
 
 

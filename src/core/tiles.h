@@ -15,7 +15,7 @@ enum {
     T_BRICK_POWER,    /* looks like a brick: gives a power-up */
     T_BRICK_NOVA,     /* looks like a brick: gives a supernova */
     T_Q_COIN,         /* ? capsule: one star bit */
-    T_Q_POWER,        /* ? capsule: a power-up (planet when small, blaster when big) */
+    T_Q_POWER,        /* ? capsule: a power-up (power cell when small, blaster when big) */
     T_USED,           /* emptied capsule (solid) */
     T_SOLID,          /* hull block: unbreakable (stairs) */
     T_TUBE_TL,        /* tube mouth, left half  (2 metatiles wide) */

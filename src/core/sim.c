@@ -205,7 +205,7 @@ static void bump(uint16_t col, uint8_t row)
         ents_bump_above(col, row);
         w->lv[col & (LV_COLS - 1)][row] = T_USED;
         sprout(col, row, t == T_BRICK_NOVA ? E_NOVA : t == T_HIDDEN_1UP ? E_1UP
-                            : w->power ? E_BLASTER : E_PLANET);
+                            : w->power ? E_BLASTER : E_CELL);
         bump_fx(col, row, T_USED);
         return;
     default:
