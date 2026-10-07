@@ -29,7 +29,7 @@
 @objpal OPAL_BLASTER  #000000  #ffffff  #ff74b8  #4a0c30
 @objpal OPAL_GREEN    #000000  #e4ffb4  #52c83a  #165a22
 @objpal OPAL_RED      #000000  #ffe4a0  #f04a30  #6a1410
-@objpal OPAL_ITEM     #000000  #fff0b0  #b45cf4  #4a1a78
+@objpal OPAL_ITEM     #000000  #eef0ff  #b45cf4  #4a1a78
 @objpal OPAL_GOLD     #000000  #ffffd0  #f8c020  #7a3c08
 @objpal OPAL_FX       #000000  #ffffff  #ff9a4c  #6a2810
 @objpal OPAL_BLOCK    #000000  #d8b8a0  #96705e  #4a2e30
