@@ -89,8 +89,27 @@ latest build, tagged with its date. Every pull request's ROM is also attached to
 | D-pad down | duck (when big) |
 | **START** | pause; while paused: **START** resumes, **SELECT** restarts the seed, **A+B** quits to the title |
 
-On the title screen: **START** plays the seed shown, **SELECT** rolls a new random seed, and
-**left / right / up / down** edit the seed's four hex digits.
+On the title screen: **SELECT** rolls a new random seed, **left / right / up / down** edit the
+seed's four hex digits, and **START** goes on to pick a mode.
+
+### Modes
+
+Pick one after the title (**up / down**, then **START** or **A**; **B** goes back). The game
+remembers your choice and keeps a separate best score and distance for each mode, and the game
+over card says which mode the run was played in.
+
+| Mode | You press | |
+| --- | --- | --- |
+| **Classic** | everything | hold **B** to run, as in the original |
+| **Auto sprint** | d-pad + **A** | Peter always runs at full speed, so you never need two buttons at once; **B** still fires the plasma flower |
+| **Auto run** | **A** | Peter runs right at full speed on his own: you only jump (**B** still fires, **down** still ducks) |
+
+The search bot proves every sector can be cleared in all three modes, including auto run with
+nothing but the jump button.
+
+<p align="center">
+  <img src="docs/screens/cgb_modes.png" width="240" alt="The mode menu">
+</p>
 
 ### The HUD
 
@@ -102,7 +121,7 @@ PETER     *x07   ^276        star bits, time left
 <p align="center">
   <img src="docs/screens/dmg_title.png" width="240" alt="The title on an original Game Boy">
   <img src="docs/screens/dmg_run.png" width="240" alt="Running on an original Game Boy">
-  <img src="docs/screens/cgb_game_over.png" width="240" alt="Game over: score, distance, sectors, run time, seed">
+  <img src="docs/screens/cgb_game_over.png" width="240" alt="Game over: score, distance, sectors, run time, seed, mode">
 </p>
 
 ## Under the hood
@@ -121,7 +140,7 @@ src/core/   the game itself, portable C (SDCC for the Game Boy, gcc for the test
 src/gb/     the Game Boy front end
   main.c        boot, interrupts (HUD split, VBlank column/HUD/tile writes), the frame loop
   render.c      BG streaming, sprites, HUD, sound events
-  screens.c     title + seed entry, pause, game over, the battery save
+  screens.c     title + seed entry, the mode menu, pause, game over, the battery save
   sound.c       a 4-channel engine: original songs, 17 effects, click-free on real hardware
   assets.c      generated from assets/*.txt by tools/gen_assets.py
 assets/     hand-editable ASCII-art tiles, sprites, font, title, palettes
@@ -141,7 +160,8 @@ tests/      test_core.c (+ bot.c) · test_sound.c · test_assets.py · test_rom.
   A death rebuilds the checkpoint sector from `(seed, sector)` alone.
 - **Every sector is beatable, and the tests prove it.** A search bot plays with button presses
   only (run, jump, wait, back up, with backtracking) and must clear 12 sectors of terrain on 40
-  seeds and 8 sectors with enemies on 12 seeds, under the real clock.
+  seeds and 8 sectors with enemies on 12 seeds, under the real clock; then again in auto sprint
+  and auto run.
 
 ### Build
 
@@ -164,6 +184,7 @@ make screenshots  # regenerate docs/screens
 build/sppgen show 0x1985 0        # ASCII map of sector 0 of seed 1985
 build/sppgen bot 0x1985 12        # let the bot play 12 sectors: time, score, distance per sector
 build/sppgen bot 0x1985 12 god    # terrain only (no enemies)
+build/sppgen -m 2 bot 0x1985 12   # in a mode: 0 classic, 1 auto sprint, 2 auto run
 ```
 
 ### CI and releases

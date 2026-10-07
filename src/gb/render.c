@@ -600,6 +600,7 @@ void hud_pause(uint8_t on) BANKED
         print_win(5, 1, t);
     } else {
         print_win(0, 0, "PETER   ");
+        print_win(7, 1, "  ");                     /* the end of "SEED 1985" (the score is 7 wide) */
         hud_score_rev = (uint8_t)(W.score_rev - 1);
     }
 }

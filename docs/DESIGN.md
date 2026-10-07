@@ -71,8 +71,8 @@ sectors with enemies on 12 seeds.
 - **Banks.** Bank 0: boot, interrupts, the frame loop, sound. The simulation, entities, generator,
   renderer, screens and art each sit in switchable banks (autobanked); the art tables the
   renderer needs every frame are copied to RAM at load.
-- **Save.** MBC5 SRAM keeps the best score, the best distance and the last seed, with a magic,
-  a version and a checksum.
+- **Save.** MBC5 SRAM keeps the best score and distance per mode, the last seed and the last
+  mode, with a magic, a version and a checksum (a version 1 save's best becomes the classic one).
 
 ## 4. Performance
 

@@ -8,21 +8,33 @@
 #include "assets.h"
 #include "sound.h"
 
-uint32_t best_score;
-uint16_t best_dist;
+uint32_t best_score[MODE_COUNT];     /* a best per mode: assisted runs never beat classic ones */
+uint16_t best_dist[MODE_COUNT];
 uint16_t last_seed;
+uint8_t seed_saved;                  /* last_seed holds a seed played (0000 is a seed too) */
 
 /* ------------------------------------------------------------------ save (MBC5 SRAM) */
 #define SAVE_MAGIC 0x5050    /* "PP" */
-#define SAVE_VER   1
+#define SAVE_VER   2
 typedef struct {
+    uint16_t magic;
+    uint8_t ver;
+    uint32_t best_score[MODE_COUNT];
+    uint16_t best_dist[MODE_COUNT];
+    uint16_t last_seed;
+    uint8_t seed_saved;
+    uint8_t last_mode;
+    uint8_t check;
+} Save;
+
+typedef struct {             /* version 1: one best, no mode */
     uint16_t magic;
     uint8_t ver;
     uint32_t best_score;
     uint16_t best_dist;
     uint16_t last_seed;
     uint8_t check;
-} Save;
+} SaveV1;
 
 static uint8_t checksum(const uint8_t *p, uint8_t n)
 {
@@ -34,18 +46,30 @@ static uint8_t checksum(const uint8_t *p, uint8_t n)
 void save_load(void) BANKED
 {
     Save s;
+    uint8_t i;
     ENABLE_RAM;
     SWITCH_RAM(0);
     memcpy(&s, (const void *)0xA000, sizeof(s));
     DISABLE_RAM;
-    if (s.magic == SAVE_MAGIC && s.ver == SAVE_VER && s.check == checksum((const uint8_t *)&s, sizeof(s) - 1)) {
-        best_score = s.best_score;
-        best_dist = s.best_dist;
+    memset(best_score, 0, sizeof(best_score));
+    memset(best_dist, 0, sizeof(best_dist));
+    last_seed = 0;
+    seed_saved = 0;
+    play_mode = MODE_CLASSIC;
+    if (s.magic != SAVE_MAGIC) return;
+    if (s.ver == SAVE_VER && s.check == checksum((const uint8_t *)&s, sizeof(s) - 1)) {
+        for (i = 0; i < MODE_COUNT; i++) { best_score[i] = s.best_score[i]; best_dist[i] = s.best_dist[i]; }
         last_seed = s.last_seed;
+        seed_saved = s.seed_saved;
+        play_mode = s.last_mode < MODE_COUNT ? s.last_mode : MODE_CLASSIC;
     } else {
-        best_score = 0;
-        best_dist = 0;
-        last_seed = 0;
+        const SaveV1 *v = (const SaveV1 *)&s;  /* an older save: its best was a classic run */
+        if (v->ver == 1 && v->check == checksum((const uint8_t *)v, sizeof(SaveV1) - 1)) {
+            best_score[MODE_CLASSIC] = v->best_score;
+            best_dist[MODE_CLASSIC] = v->best_dist;
+            last_seed = v->last_seed;
+            seed_saved = last_seed != 0;
+        }
     }
 }
 
@@ -54,9 +78,11 @@ static void save_store(void)
     Save s;
     s.magic = SAVE_MAGIC;
     s.ver = SAVE_VER;
-    s.best_score = best_score;
-    s.best_dist = best_dist;
+    memcpy(s.best_score, best_score, sizeof(best_score));
+    memcpy(s.best_dist, best_dist, sizeof(best_dist));
     s.last_seed = last_seed;
+    s.seed_saved = seed_saved;
+    s.last_mode = play_mode;
     s.check = checksum((const uint8_t *)&s, sizeof(s) - 1);
     ENABLE_RAM;
     SWITCH_RAM(0);
@@ -131,42 +157,105 @@ static void title_trail(uint8_t pose)
     set_bkg_tiles(0, 5, 1, 2, pose ? blank : trail);
 }
 
+/* the modes as the menus name and explain them */
+static const char *const mode_name[MODE_COUNT] = { "CLASSIC", "AUTO SPRINT", "AUTO RUN" };
+static const char *const mode_help[MODE_COUNT] = { "B RUNS  A JUMPS", "ALWAYS RUNNING", "ONLY JUMP!" };
+
+/* "BEST 0000000 00000M" for each mode, made once per title (the 32-bit formatting is slow) */
+static char best_line[MODE_COUNT][20];
+
+static void make_best_lines(void)
+{
+    uint8_t m;
+    for (m = 0; m < MODE_COUNT; m++) {
+        char *t = best_line[m];
+        memcpy(t, "BEST ", 5);
+        fmt_u32(t + 5, best_score[m], 7);
+        t[12] = ' ';
+        fmt_u32(t + 13, best_dist[m], 5);
+        t[18] = 'M';
+        t[19] = 0;
+    }
+}
+
+/* the title's text rows for step 0 (the seed) or 1 (the mode) */
+static void title_text(uint8_t step)
+{
+    char t[20];
+    uint8_t m;
+    clear_rows(11, 17);
+    if (!step) {
+        print(4, 12, "PRESS START");
+        print(3, 14, "SEED");
+        print(1, 16, best_line[play_mode]);
+        memcpy(t, "MODE ", 5);
+        strcpy(t + 5, mode_name[play_mode]);
+        print(1, 17, t);
+        return;
+    }
+    print(3, 11, "CHOOSE A MODE");
+    for (m = 0; m < MODE_COUNT; m++) print(4, (uint8_t)(12 + m), mode_name[m]);
+}
+
+/* step 1: the mode menu's cursor, its help line and that mode's best */
+static void mode_text(void)
+{
+    uint8_t m;
+    for (m = 0; m < MODE_COUNT; m++) print(2, (uint8_t)(12 + m), m == play_mode ? ">" : " ");
+    print(0, 15, "                    ");
+    print((uint8_t)((20 - strlen(mode_help[play_mode])) / 2), 15, mode_help[play_mode]);
+    print(1, 16, best_line[play_mode]);
+    print(1, 17, "START:GO  B:BACK");
+}
+
 uint16_t title_screen(void) BANKED
 {
     char t[12];
-    uint8_t cursor = 0, blink = 0, edited = 0, run = 0;
-    uint16_t seed = last_seed ? last_seed : 0x1985;
+    uint8_t cursor = 0, blink = 0, edited = 0, run = 0, step = 0;
+    uint16_t seed = seed_saved ? last_seed : 0x1985;
     DISPLAY_OFF;
     hud_on = 0;
     HIDE_WIN;
     sprites_clear();
     load_title_gfx();
-    print(4, 12, "PRESS START");
-    print(3, 14, "SEED");
-    print(3, 16, "BEST");
-    fmt_u32(t, best_score, 7);
-    print(8, 16, t);
-    fmt_u32(t, best_dist, 5);
-    t[5] = 'M'; t[6] = 0;
-    print(8, 17, t);
+    make_best_lines();
+    title_text(0);
     far_copy(&trail[0], &title_map[5][0], 1);
     far_copy(&trail[1], &title_map[6][0], 1);
     title_peter(0);
     music_play(MUS_TITLE);
     DISPLAY_ON;
     for (;;) {
-        hex4(t, seed);
-        print(8, 14, t);
-        /* the digit being edited blinks */
-        if ((blink & 16) && edited) print((uint8_t)(8 + cursor), 14, " ");
-        print(13, 14, "SEL:NEW");
+        if (!step) {
+            hex4(t, seed);
+            print(8, 14, t);
+            /* the digit being edited blinks */
+            if ((blink & 16) && edited) print((uint8_t)(8 + cursor), 14, " ");
+            print(13, 14, "SEL:NEW");
+        }
         wait_frame();
         /* the pose set last frame is on screen now: its trail goes with it */
         if (run == 0 || run == DASH_PERIOD) title_trail(run != 0);
         blink++;
         if (++run == 2 * DASH_PERIOD) run = 0;
         title_peter(run >= DASH_PERIOD);
-        if (pressed & J_START) break;
+        if (step) {                          /* the mode menu */
+            if (pressed & (J_START | J_A)) break;
+            if (pressed & J_B) { step = 0; title_text(0); sfx_play(SFX_SELECT); continue; }
+            if (pressed & (J_UP | J_DOWN | J_SELECT)) {
+                play_mode = (uint8_t)((play_mode + ((pressed & J_UP) ? MODE_COUNT - 1 : 1)) % MODE_COUNT);
+                mode_text();
+                sfx_play(SFX_SELECT);
+            }
+            continue;
+        }
+        if (pressed & J_START) {             /* on to the mode menu */
+            step = 1;
+            title_text(1);
+            mode_text();
+            sfx_play(SFX_SELECT);
+            continue;
+        }
         if (pressed & J_SELECT) { seed = rnd_seed(); sfx_play(SFX_SELECT); }
         if (pressed & J_LEFT) { cursor = (uint8_t)((cursor + 3) & 3); edited = 1; sfx_play(SFX_SELECT); }
         if (pressed & J_RIGHT) { cursor = (uint8_t)((cursor + 1) & 3); edited = 1; sfx_play(SFX_SELECT); }
@@ -183,6 +272,7 @@ uint16_t title_screen(void) BANKED
     sprites_clear();                         /* Peter leaves with the title */
     sfx_play(SFX_PAUSE);
     last_seed = seed;
+    seed_saved = 1;
     save_store();
     return seed;
 }
@@ -211,8 +301,9 @@ void game_over_screen(void) BANKED
 {
     char t[12];
     uint8_t newbest = 0, i;
-    if (W.score > best_score) { best_score = W.score; newbest = 1; }
-    if (W.dist > best_dist) { best_dist = W.dist; newbest |= 2; }
+    uint8_t m = W.mode;
+    if (W.score > best_score[m]) { best_score[m] = W.score; newbest = 1; }
+    if (W.dist > best_dist[m]) { best_dist[m] = W.dist; newbest |= 2; }
     if (newbest) save_store();
     DISPLAY_OFF;
     hud_on = 0;
@@ -221,19 +312,21 @@ void game_over_screen(void) BANKED
     load_world_gfx();
     clear_rows(0, 17);
     print(5, 1, "GAME  OVER");
-    print(2, 4, "SCORE");
-    fmt_u32(t, W.score, 7); print(11, 4, t);
-    print(2, 6, "DISTANCE");
-    fmt_u32(t, W.dist, 5); t[5] = 'M'; t[6] = 0; print(12, 6, t);
-    print(2, 8, "SECTORS");
-    fmt_u32(t, W.sectors_done, 4); print(13, 8, t);
-    print(2, 10, "RUN TIME");
-    fmt_time(t, W.frames); print(11, 10, t);
-    print(2, 12, "SEED");
-    hex4(t, W.seed); print(13, 12, t);
-    if (newbest & 1) print(4, 14, "NEW BEST SCORE");
-    else if (newbest & 2) print(3, 14, "NEW BEST DISTANCE");
-    print(4, 16, "PRESS START");
+    print(2, 3, "SCORE");
+    fmt_u32(t, W.score, 7); print(11, 3, t);
+    print(2, 5, "DISTANCE");
+    fmt_u32(t, W.dist, 5); t[5] = 'M'; t[6] = 0; print(12, 5, t);
+    print(2, 7, "SECTORS");
+    fmt_u32(t, W.sectors_done, 4); print(13, 7, t);
+    print(2, 9, "RUN TIME");
+    fmt_time(t, W.frames); print(11, 9, t);
+    print(2, 11, "SEED");
+    hex4(t, W.seed); print(13, 11, t);
+    print(2, 13, "MODE");
+    print((uint8_t)(18 - strlen(mode_name[m])), 13, mode_name[m]);
+    if (newbest & 1) print(4, 15, "NEW BEST SCORE");
+    else if (newbest & 2) print(2, 15, "NEW BEST DISTANCE");
+    print(4, 17, "PRESS START");
     DISPLAY_ON;
     for (i = 0; i < 40; i++) wait_frame();
     do wait_frame(); while (!(pressed & (J_START | J_A)));

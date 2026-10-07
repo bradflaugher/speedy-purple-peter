@@ -26,11 +26,11 @@ SEED = 0x1985                     # the title's default seed on a fresh save
 # keep in step with dbg_world_off[] in src/gb/main.c
 FIELDS = ['px', 'py', 'pvx', 'pvy', 'power', 'pstate', 'lives', 'score', 'frames', 'sectors_done',
           'dist', 'time', 'cam_x', 'over', 'coins', 'seed', 'ground', 'nova_t', 'cam_y', 'god', 'size',
-          'check_col', 'gen_col', 'lv', 'bonus', 'gen', 'e']
+          'check_col', 'gen_col', 'lv', 'bonus', 'gen', 'e', 'mode']
 SIZES = {'px': 2, 'py': -2, 'pvx': -2, 'pvy': -2, 'power': 1, 'pstate': 1, 'lives': 1, 'score': 4,
          'frames': 4, 'sectors_done': 2, 'dist': 2, 'time': 2, 'cam_x': 2, 'over': 1, 'coins': 1,
          'seed': 2, 'ground': 1, 'nova_t': 2, 'cam_y': 1, 'god': 1,
-         'check_col': 2, 'gen_col': 2, 'bonus': 2}
+         'check_col': 2, 'gen_col': 2, 'bonus': 2, 'mode': 1}
 BUTTONS = [(0x01, 'right'), (0x02, 'left'), (0x04, 'up'), (0x08, 'down'), (0x10, 'a'), (0x20, 'b'),
            (0x40, 'select'), (0x80, 'start')]
 PS_PLAY, PS_GROW, PS_SHRINK, PS_DEAD, PS_OVER = range(5)
@@ -47,10 +47,11 @@ class Game:
         self.W = self.addr('_W')
         self.held = 0
         if seed is not None:           # the title starts on this seed (as if it were the last one played)
-            a = self.addr('_last_seed')
+            a, saved = self.addr('_last_seed'), self.addr('_seed_saved')
             def poke(_):
                 self.pb.memory[a] = seed & 0xFF
                 self.pb.memory[a + 1] = seed >> 8
+                self.pb.memory[saved] = 1
             self.pb.hook_register(*self.pb.symbol_lookup('_title_screen'), poke, None)
 
     def addr(self, name):
@@ -92,8 +93,15 @@ class Game:
         self.set_keys(0)
         self.tick(2)
 
-    def start_run(self):
+    def start_run(self, mode=0):
+        """from boot: the title (START), the mode menu (DOWN to the mode, START), into the run"""
         self.tick(150)                      # boot and the title
+        self.press(0x80)
+        self.tick(8)
+        for _ in range(3):
+            if self.var('_play_mode', 1) == mode:
+                break
+            self.press(0x08)                # down: the next mode
         self.set_keys(0x80)
         for _ in range(240):
             self.tick()
@@ -106,7 +114,11 @@ class Game:
         self.pb.screen.image.save(os.path.join(SHOTS, name))
 
     def stop(self, save=False):
-        self.pb.stop(save=save)
+        if save:                            # the cartridge RAM into self.ram (a fresh Game can boot it)
+            self.ram.seek(0)
+            self.pb.stop(save=True, ram_file=self.ram)
+        else:
+            self.pb.stop(save=False)
 
 
 def host_path(sectors, seed=SEED):
@@ -206,7 +218,10 @@ class TestRom(unittest.TestCase):
             g.shot('cgb_title.png')
             g.press(0x02)          # left: edit the last digit
             g.press(0x04)          # up: +1
-            g.press(0x80)
+            g.press(0x80)          # to the mode menu
+            g.tick(8)
+            g.shot('cgb_modes.png')
+            g.press(0x80)          # classic
             for _ in range(240):
                 g.tick()
                 if g.var('_hud_on', 1):
@@ -222,6 +237,9 @@ class TestRom(unittest.TestCase):
             g.set_keys(0x21)
             g.tick(60)
             g.set_keys(0)
+            # the window's HUD: PETER (row 0) and the score with the gap after it (row 1)
+            spots = list(range(0, 8)) + list(range(32, 42))
+            hud = [g.pb.memory[0x9C00 + i] for i in spots]
             g.press(0x80)              # pause
             f = g.w('frames')
             g.tick(60)
@@ -230,6 +248,8 @@ class TestRom(unittest.TestCase):
             g.press(0x80)              # resume
             g.tick(10)
             self.assertGreater(g.w('frames'), f)
+            # the HUD is back as it was (no stray seed digits; nothing scored meanwhile)
+            self.assertEqual([g.pb.memory[0x9C00 + i] for i in spots], hud)
             g.press(0x80)              # pause, then SELECT restarts the same seed
             g.press(0x40)
             for _ in range(120):
@@ -241,12 +261,48 @@ class TestRom(unittest.TestCase):
         finally:
             g.stop()
 
+    def test_modes(self):
+        """The mode menu: B goes back to the seed, DOWN picks a mode, and the run plays it: in
+        auto run Peter runs right at full speed with no buttons held, and the mode is saved."""
+        g = Game(False)
+        try:
+            g.tick(150)
+            g.press(0x80)          # to the mode menu
+            g.tick(8)
+            g.press(0x20)          # B: back to the seed
+            g.tick(8)
+            g.press(0x80)
+            g.tick(8)
+            g.press(0x08)          # auto sprint
+            g.press(0x08)          # auto run
+            self.assertEqual(g.var('_play_mode', 1), 2)
+            g.shot('dmg_modes.png')
+            g.press(0x80)
+            for _ in range(240):
+                g.tick()
+                if g.var('_hud_on', 1):
+                    break
+            self.assertEqual(g.w('mode'), 2)
+            x0 = g.w('px')
+            g.tick(120)
+            self.assertGreater(g.w('px') - x0, 150)       # running, nothing pressed
+            self.assertEqual(g.w('pvx'), 0x2900)
+        finally:
+            g.stop(save=True)
+        g2 = Game(False, g.ram.getvalue())                 # the mode is remembered
+        try:
+            g2.tick(150)
+            self.assertEqual(g2.var('_play_mode', 1), 2)
+        finally:
+            g2.stop()
+
     def test_game_over_saves_the_best(self):
         g = Game(False)
         try:
             g.start_run()
             g.poke('lives', 1)
             g.poke('time', 2)                # the clock runs out in a moment
+            g.poke('score', 12340)           # (a best worth saving)
             g.set_keys(0x21)
             for _ in range(600):
                 g.tick()
@@ -255,6 +311,7 @@ class TestRom(unittest.TestCase):
             self.assertEqual(g.w('over'), 1)
             g.set_keys(0)
             score = g.w('score')
+            self.assertGreater(score, 0)
             g.tick(400)                      # the game over jingle, then the card
             g.shot('dmg_game_over.png')
             self.assertEqual(g.var('_best_score', 4), score)

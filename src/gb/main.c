@@ -36,7 +36,7 @@ const uint16_t dbg_world_off[] = {
     offsetof(World, cam_x), offsetof(World, over), offsetof(World, coins), offsetof(World, seed),
     offsetof(World, ground), offsetof(World, nova_t), offsetof(World, cam_y), offsetof(World, god),
     sizeof(World), offsetof(World, check_col), offsetof(World, gen_col), offsetof(World, lv),
-    offsetof(World, bonus), offsetof(World, gen), offsetof(World, e)
+    offsetof(World, bonus), offsetof(World, gen), offsetof(World, e), offsetof(World, mode)
 };
 
 /* debug counters the ROM tests read (by symbol) */

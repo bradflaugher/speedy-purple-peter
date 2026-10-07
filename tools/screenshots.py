@@ -37,7 +37,15 @@ def run(cgb, keys, grab, gif=None):
     g = Game(cgb)
     g.tick(150)
     save(g.pb.screen.image, '%s_title.png' % ('cgb' if cgb else 'dmg'))
-    g.start_run()
+    g.press(0x80)                       # the mode menu
+    g.tick(8)
+    save(g.pb.screen.image, '%s_modes.png' % ('cgb' if cgb else 'dmg'))
+    g.set_keys(0x80)                    # classic
+    for _ in range(240):
+        g.tick()
+        if g.var('_hud_on', 1):
+            break
+    g.set_keys(0)
     ring, sa = g.addr('_dbg_ring'), g.addr('_dbg_stop_at')
 
     def setstop(v):
@@ -71,6 +79,7 @@ def run(cgb, keys, grab, gif=None):
     g.press(0x80)
     # game over: run out of lives and time
     g.poke('lives', 1)
+    g.poke('bonus', 0)                  # (not in the middle of a checkpoint's time bonus)
     g.poke('time', 1)
     for _ in range(800):
         g.tick()

@@ -50,8 +50,8 @@ uint16_t title_screen(void) BANKED;    /* returns the seed to play */
 uint8_t pause_screen(void) BANKED;     /* 0 resume, 1 restart the seed, 2 quit to title */
 void game_over_screen(void) BANKED;
 void save_load(void) BANKED;
-extern uint32_t best_score;
-extern uint16_t best_dist;
+extern uint32_t best_score[MODE_COUNT];   /* per mode */
+extern uint16_t best_dist[MODE_COUNT];
 extern uint16_t last_seed;
 extern uint8_t play_mode;            /* main.c: the mode the next run is played in */
 
