@@ -245,12 +245,15 @@ static void peter_move_y(void)
 
 static void peter_physics(void)
 {
-    uint8_t keys = w->keys, pressed = (uint8_t)(w->keys & ~w->prev);
-    int8_t dir = (keys & K_RIGHT) ? 1 : (keys & K_LEFT) ? -1 : 0;
-    uint16_t speed = ABS16(w->pvx);
-    int8_t mdir = w->pvx > 0 ? 1 : w->pvx < 0 ? -1 : 0;
-    uint8_t h, ht, big;
-    int16_t oldfeet;
+    SST uint8_t keys, pressed, h, ht, big;
+    SST int8_t dir, mdir;
+    SST uint16_t speed;
+    SST int16_t oldfeet;
+    keys = w->keys;
+    pressed = (uint8_t)(w->keys & ~w->prev);
+    dir = (keys & K_RIGHT) ? 1 : (keys & K_LEFT) ? -1 : 0;
+    speed = ABS16(w->pvx);
+    mdir = w->pvx > 0 ? 1 : w->pvx < 0 ? -1 : 0;
 
     if ((keys & (K_LEFT | K_RIGHT)) == (K_LEFT | K_RIGHT)) dir = 0;
 
@@ -437,14 +440,6 @@ static void beacon(void)
 }
 
 /* ------------------------------------------------------------------ entities */
-
-/* hot functions keep their locals in static RAM (SST): direct addressing is much faster than
-   the stack on the Game Boy, and nothing here is re-entrant */
-#ifdef __SDCC
-#define SST static
-#else
-#define SST
-#endif
 
 static void camera(void)
 {

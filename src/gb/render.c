@@ -9,6 +9,7 @@
 #include "sound.h"
 
 #define COLMASK 0x0FFF
+#define SST static                  /* hot locals in static RAM: faster than the stack */
 #define VIEW_COLS 12                /* metatile columns drawn from the camera's column */
 
 static uint16_t drawn_col;
@@ -100,18 +101,21 @@ static void vram_strip(uint8_t *dst, const uint8_t *src)
 /* build a column into tp/ap (2 x 26 tiles and attributes) */
 static void build_col(uint16_t col, uint8_t *tp, uint8_t *ap)
 {
-    uint8_t r, bumps = 0;
+    SST uint8_t r, bumps, t;
+    SST const uint8_t *lv, *m;
     const Fx *f;
+    bumps = 0;
     for (f = W.fx; f != W.fx + MAX_FX; f++) if (f->kind == FX_BUMP) bumps = 1;
-    const uint8_t *lv = W.lv[(uint8_t)col & (LV_COLS - 1)];
+    lv = W.lv[(uint8_t)col & (LV_COLS - 1)];
     for (r = 0; r < LV_ROWS; r++) {
-        uint8_t t = vis_map[lv[r]];
-        const uint8_t *m, *a;
+        t = vis_map[lv[r]];
         if (bumps && t != T_SKY && bumping(col, r)) t = T_SKY;
-        m = ram_mt_tiles[t]; a = ram_mt_attr[t];
-        tp[0] = m[0]; tp[1] = m[1]; tp[2] = m[2]; tp[3] = m[3];
-        ap[0] = a[0]; ap[1] = a[1]; ap[2] = a[2]; ap[3] = a[3];
-        tp += 4; ap += 4;
+        m = ram_mt_tiles[t];
+        *tp++ = *m++; *tp++ = *m++; *tp++ = *m++; *tp++ = *m;
+        if (is_cgb) {
+            m = ram_mt_attr[t];
+            *ap++ = *m++; *ap++ = *m++; *ap++ = *m++; *ap++ = *m;
+        }
     }
 }
 
@@ -178,8 +182,11 @@ static void stream(void)
  * Written for SDCC: positions are turned into 8-bit OAM coordinates once (at()), then objects
  * are written with a byte pointer. Off-screen halves need no clipping: an OAM x of 0 or >= 168
  * and a y of 0 or >= 160 are invisible, and the 8-bit wrap puts everything off-screen there. */
+extern uint8_t dbg_ly[8];
+uint8_t dbg_sprl[4];
 static uint8_t ox, oy;              /* OAM x, y of the current object's top-left */
 static uint8_t *op8;                /* next free OAM byte */
+static uint8_t *oam_last = (uint8_t *)&shadow_OAM[40];   /* the end of last frame's objects */
 #define OAM_END ((uint8_t *)&shadow_OAM[40])
 static uint8_t pl_gold, pl_fx, pl_green, pl_red, pl_red1, pl_item, pl_block;
 
@@ -188,13 +195,15 @@ void sprites_clear(void) BANKED
     uint8_t i;
     for (i = 0; i < 40; i++) shadow_OAM[i].y = 0;
     oam_n = 0;
+    oam_last = (uint8_t *)shadow_OAM;
 }
 
 /* 0 if the 16 px wide object at world (x, y) is entirely off-screen */
 static uint8_t at(uint16_t x, int16_t y)
 {
-    uint16_t sx = (uint16_t)(x - W.cam_x + 8);
-    uint16_t sy = (uint16_t)(y - W.cam_y + 32);
+    SST uint16_t sx, sy;
+    sx = (uint16_t)(x - W.cam_x + 8);
+    sy = (uint16_t)(y - W.cam_y + 32);
     if ((uint16_t)(sx + 8) >= 184 || (uint16_t)(sy + 16) >= 192) return 0;
     ox = (uint8_t)sx;
     oy = (uint8_t)sy;
@@ -265,20 +274,17 @@ static const uint8_t score_l[11] = { SPR_N10, SPR_N20, SPR_N40, SPR_N50, SPR_N80
 static const uint8_t score_r[11] = { SPR_N0, SPR_N0, SPR_N0, SPR_N0, SPR_N0, SPR_N00, SPR_N00, SPR_N00, SPR_N00, SPR_N00, SPR_NP };
 static const uint8_t coin_t[4] = { SPR_COIN0, SPR_COIN1, SPR_COIN2, SPR_COIN1 };
 
-static void draw_bumps(void)
-{
-    const Fx *f;
-    for (f = W.fx; f != W.fx + MAX_FX; f++)
-        if (f->kind == FX_BUMP && at(f->x, (int16_t)(f->y + f->vy)))
-            put2(f->v == T_USED ? SPR_USED : SPR_BRICK, pl_block);
-}
-
 static void draw_fx(void)
 {
     const Fx *f;
     for (f = W.fx; f != W.fx + MAX_FX; f++) {
         uint8_t k = f->kind;
-        if (!k || k == FX_BUMP || !at(f->x, f->y)) continue;
+        if (!k) continue;
+        if (k == FX_BUMP) {
+            if (at(f->x, (int16_t)(f->y + f->vy))) put2(f->v == T_USED ? SPR_USED : SPR_BRICK, pl_block);
+            continue;
+        }
+        if (!at(f->x, f->y)) continue;
         switch (k) {
         case FX_COIN: {
             uint8_t c = (uint8_t)((f->t >> 1) & 3);
@@ -367,16 +373,24 @@ static void draw_sprites(void)
         pl_red1 = S_PALETTE;
     }
     op8 = (uint8_t *)shadow_OAM;
+    dbg_ly[6] = LY_REG;
     draw_peter();
-    draw_bumps();
+    dbg_ly[7] = LY_REG;
     for (s = W.shot; s != W.shot + MAX_SHOTS; s++)
         if (s->kind && at(s->x, s->y))
             put1(SPR_SHOT, (uint8_t)(pl_fx | ((frame_count & 2) ? S_FLIPX : 0) | ((frame_count & 4) ? S_FLIPY : 0)));
+    dbg_sprl[0] = LY_REG;
     draw_ents();
+    dbg_sprl[1] = LY_REG;
     draw_item();
     if (W.flag_col != 0xFFFF && at((uint16_t)(W.flag_col * 16 - 8), W.flag_y)) put2(SPR_FLAG, pl_gold);
     draw_fx();
-    for (p = op8; p != OAM_END; p += 4) *p = 0;
+    /* hide the objects left over from the last frame (only those) */
+    {
+        uint8_t *end = op8;
+        for (p = op8; p < oam_last; p += 4) *p = 0;
+        oam_last = end;
+    }
 }
 
 /* ------------------------------------------------------------------ HUD */
@@ -499,7 +513,6 @@ static void sounds(void)
     else if (s & EV_TICK) sfx_play(SFX_TICK);
 }
 
-extern uint8_t dbg_ly[8];
 
 void render_frame(void) BANKED
 {

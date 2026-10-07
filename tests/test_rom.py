@@ -158,7 +158,7 @@ class TestRom(unittest.TestCase):
             n = len(self.keys)
             # the frame budget: CGB (double speed) is a locked 60 fps; the DMG may slow down a
             # little in busy stretches (as many Game Boy games do) but not more than this
-            self.assertLessEqual(drops, n // (200 if cgb else 5), "%d slow frames in %d" % (drops, n))
+            self.assertLessEqual(drops, n // (200 if cgb else 10), "%d slow frames in %d" % (drops, n))
         finally:
             g.stop()
 

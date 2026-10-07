@@ -23,6 +23,14 @@ extern uint8_t dbg_sim_ly[16];
 #define HELPER static
 #endif
 #define COLMASK 0x0FFF
+
+/* hot functions keep their locals in static RAM (SST) on the Game Boy: direct addressing is much
+   faster than the stack there, and nothing in the simulation is re-entrant */
+#ifdef __SDCC
+#define SST static
+#else
+#define SST
+#endif
 #define ABS16(v) ((uint16_t)((v) < 0 ? -(v) : (v)))
 
 static const uint16_t score_tab[11] = { 100, 200, 400, 500, 800, 1000, 2000, 4000, 5000, 8000, 0 };

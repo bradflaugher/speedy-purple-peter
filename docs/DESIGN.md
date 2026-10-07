@@ -84,11 +84,13 @@ DMG has about 17,500 cycles a frame. Measured with LY stamps in PyBoy (`dbg_ly`,
 - loops walk pointers instead of indexing arrays of structs;
 - sprites are written as bytes straight into shadow OAM after one 8-bit position conversion;
 - VRAM writes (columns, HUD, animated tiles) happen in VBlank, never waiting on the LCD;
-- the HUD updates one field per frame.
+- the HUD updates one field per frame;
+- the hottest functions keep their locals in static RAM (`SST`), which SDCC addresses directly;
+- only the OAM entries left over from the previous frame are cleared.
 
-On a Game Boy Color (double speed) the game is a locked 60 fps. On the original DMG it can drop a
-frame in busy stretches (the ROM test allows up to one in five over the bot's run; it is usually
-far less). The simulation is frame-locked, so a slow frame never changes the outcome: the run timer
+On a Game Boy Color (double speed) the game is a locked 60 fps. On the original DMG it drops about
+one frame in twenty in busy stretches (about 5% over the bot's full-speed run; the ROM test fails
+above 10%). The simulation is frame-locked, so a slow frame never changes the outcome: the run timer
 counts game frames, and a seed plays identically on every machine.
 
 ## 5. A compiler bug, and how it was caught

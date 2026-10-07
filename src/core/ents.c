@@ -41,9 +41,11 @@ void ents_spawn(uint16_t col, uint8_t sp) SIM_BANKED
 
 static uint8_t ent_physics(Ent *e, int16_t grav, int16_t maxfall)
 {
-    uint8_t wall = 0;
+    SST uint8_t wall;
+    wall = 0;
     {
-        int16_t sum = (int16_t)((int16_t)e->xs + e->vx);
+        SST int16_t sum;
+        sum = (int16_t)((int16_t)e->xs + e->vx);
         e->x = (uint16_t)(e->x + (sum >> 8));
         e->xs = (uint8_t)(sum & 0xFF);
     }
@@ -59,7 +61,9 @@ static uint8_t ent_physics(Ent *e, int16_t grav, int16_t maxfall)
         if (e->vy > maxfall) e->vy = maxfall;
     }
     {
-        int16_t oldfeet = (int16_t)(e->y + 16), sum = (int16_t)((int16_t)e->ys + e->vy), fy, top;
+        SST int16_t oldfeet, sum, fy, top;
+        oldfeet = (int16_t)(e->y + 16);
+        sum = (int16_t)((int16_t)e->ys + e->vy);
         e->y = (int16_t)(e->y + (sum >> 8));
         e->ys = (uint8_t)(sum & 0xFF);
         fy = (int16_t)(e->y + 16);
@@ -86,7 +90,8 @@ static void ent_kill_by(Ent *e, uint8_t step, int8_t dir)
 
 static void update_ent(Ent *e)
 {
-    int16_t sx = (int16_t)(e->x - w->cam_x);
+    SST int16_t sx;
+    sx = (int16_t)(e->x - w->cam_x);
     if (sx < -48 || sx > 272 || e->y > LV_ROWS * 16 + 32) { e->kind = E_NONE; return; }
 
     if (e->state == ES_FLAT) {
@@ -220,13 +225,16 @@ static void ent_bumps(void)
 
 static void peter_vs_ents(void)
 {
-    uint8_t h = sim_peter_h();
-    Ent *e;
-    int16_t px0 = (int16_t)(w->px - w->cam_x) + 3, px1 = px0 + 9;
-    int16_t py0 = (int16_t)(w->py + (w->power ? 32 : 16) - h + 4), py1 = (int16_t)(w->py + (w->power ? 32 : 16) - 1);
-    int16_t feet = (int16_t)(py1 + 1);
+    SST uint8_t h;
+    SST Ent *e;
+    SST int16_t px0, px1, py0, py1, feet, ex, top;
+    h = (uint8_t)(w->power && !w->duck ? 32 : 16);
+    px0 = (int16_t)(w->px - w->cam_x) + 3;
+    px1 = px0 + 9;
+    py0 = (int16_t)(w->py + (w->power ? 32 : 16) - h + 4);
+    py1 = (int16_t)(w->py + (w->power ? 32 : 16) - 1);
+    feet = (int16_t)(py1 + 1);
     for (e = w->e; e != w->e + MAX_ENTS; e++) {
-        int16_t ex, top;
         if (!e->kind || e->kind == E_CANNON || e->state != ES_LIVE) continue;
         ex = (int16_t)(e->x - w->px);
         if (ex > 20 || ex < -20) continue;                  /* far apart: the cheap test */
