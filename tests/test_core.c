@@ -170,6 +170,23 @@ static void test_physics(void)
     for (i = 0; i < 90; i++) step(K_RIGHT | K_B);
     CHECK(W.px + 13 < 8 * 16 && W.px + 14 >= 8 * 16 - 1, "wall at %u", W.px);
 
+    /* the camera keeps the ground in view: a full running jump from the ground never scrolls up */
+    bench();
+    for (i = 0; i < 120; i++) step(K_RIGHT | K_B);
+    CHECK(W.cam_y == CAM_Y_MAX, "camera on the ground %u", W.cam_y);
+    step(K_RIGHT | K_B | K_A);
+    for (i = 0; i < 80; i++) {
+        step(K_RIGHT | K_B | K_A);
+        CHECK(W.cam_y == CAM_Y_MAX, "camera rose during a jump (%u)", W.cam_y);
+    }
+    /* ... but it follows him up onto something high, and back down */
+    bench();
+    for (i = 3; i < 12; i++) cell((uint16_t)i, 3, T_SOLID);
+    W.py = 3 * 16 - 16;
+    W.ground = 1;
+    for (i = 0; i < 40; i++) step(0);
+    CHECK(W.cam_y == 0, "camera up on a high ledge (%u)", W.cam_y);
+
     /* ducking (big): no acceleration, a lower box */
     bench();
     W.power = PW_BIG;

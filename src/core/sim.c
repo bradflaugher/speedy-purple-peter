@@ -441,6 +441,10 @@ static void beacon(void)
 
 /* ------------------------------------------------------------------ entities */
 
+/* The camera. Horizontally it only moves forward, keeping Peter at CAM_LEAD. Vertically it
+ * keeps the ground in view like the classic game: standing on the ground the view shows the
+ * ground's two rows at the bottom, and an ordinary jump never moves it. It only rises when Peter
+ * climbs onto something high (or his feet leave the top of the view), and it eases back down. */
 static void camera(void)
 {
     SST int16_t sx, feet, target, sy;
@@ -450,12 +454,13 @@ static void camera(void)
     target = (int16_t)w->cam_y;
     if (sx > CAM_LEAD) w->cam_x = (uint16_t)(w->cam_x + (sx - CAM_LEAD));
     sy = (int16_t)(feet - w->cam_y);
-    if (sy < 56) target = (int16_t)(feet - 56);
-    else if (sy > 104) target = (int16_t)(feet - 104);
+    if (w->ground) target = (int16_t)(feet - (VIEW_H - 32));        /* settle: feet 32 px up */
+    else if (sy < 8) target = (int16_t)(feet - 8);                 /* high above: follow up */
+    else if (sy > VIEW_H - 8) target = (int16_t)(feet - (VIEW_H - 8)); /* falling: follow down */
     if (target < 0) target = 0;
     if (target > CAM_Y_MAX) target = CAM_Y_MAX;
-    if (target < (int16_t)w->cam_y - 5) target = (int16_t)w->cam_y - 5;
-    if (target > (int16_t)w->cam_y + 5) target = (int16_t)w->cam_y + 5;
+    if (target < (int16_t)w->cam_y - 4) target = (int16_t)w->cam_y - 4;
+    if (target > (int16_t)w->cam_y + 4) target = (int16_t)w->cam_y + 4;
     w->cam_y = (uint8_t)target;
     cc = (uint16_t)(w->cam_x >> 4);
     if ((uint8_t)cc != (uint8_t)w->far_col) {       /* (cheap test first) */
