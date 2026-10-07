@@ -19,8 +19,8 @@ typedef struct {
    state right after the last beacon), 0 if every choice dies or the node budget runs out. */
 int bot_play(World *w, uint16_t sectors, uint32_t max_nodes, BotResult *res);
 
-/* Replays a path from sim_init(seed), writing the buttons of every sim_step (grow/shrink
+/* Replays a path from sim_init(seed, mode), writing the buttons of every sim_step (grow/shrink
    pauses included) to keys; returns the number of steps. W is the final state. */
-uint32_t bot_replay(uint16_t seed, const uint8_t *path, uint32_t n, uint8_t *keys, uint32_t max);
+uint32_t bot_replay(uint16_t seed, uint8_t mode, const uint8_t *path, uint32_t n, uint8_t *keys, uint32_t max);
 
 #endif

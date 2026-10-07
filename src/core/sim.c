@@ -109,10 +109,11 @@ void sim_respawn(void) SIM_BANKED
     w->mev |= MEV_RESPAWN;
 }
 
-void sim_init(uint16_t seed) SIM_BANKED
+void sim_init(uint16_t seed, uint8_t mode) SIM_BANKED
 {
     memset(&W, 0, sizeof(World));
     w->seed = seed;
+    w->mode = mode < MODE_COUNT ? mode : MODE_CLASSIC;
     w->rngs = (uint16_t)(seed ^ 0x5EED) ? (uint16_t)(seed ^ 0x5EED) : 1;
     w->lives = START_LIVES;
     w->sector = 0;
@@ -269,6 +270,7 @@ static void peter_physics(void)
     SST uint16_t speed;
     SST int16_t oldfeet;
     keys = w->keys;
+    if (w->mode == MODE_AUTORUN) keys = (uint8_t)((keys & ~K_LEFT) | K_RIGHT);   /* always right */
     pressed = (uint8_t)(w->keys & ~w->prev);
     dir = (keys & K_RIGHT) ? 1 : (keys & K_LEFT) ? -1 : 0;
     speed = ABS16(w->pvx);
@@ -278,7 +280,7 @@ static void peter_physics(void)
 
     if (w->ground) {
         w->duck = (uint8_t)(w->power && (keys & K_DOWN));
-        if (keys & K_B) w->run_t = PH_RUN_MEMORY;
+        if ((keys & K_B) || w->mode != MODE_CLASSIC) w->run_t = PH_RUN_MEMORY;   /* B runs */
         else if (w->run_t) w->run_t--;
         if (w->duck) dir = 0;
         if (dir && (speed == 0 || dir == mdir)) {

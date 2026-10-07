@@ -65,13 +65,15 @@ static void show(uint16_t seed, uint16_t sector)
     }
 }
 
+static uint8_t mode = MODE_CLASSIC;   /* -m: the play mode */
+
 static int bot(uint16_t seed, int sectors, int god)
 {
     static World w;
     static BotResult res;
     int s;
     uint32_t f0 = 0;
-    sim_init(seed);
+    sim_init(seed, mode);
     if (god) { W.god = 1; memset(W.e, 0, sizeof(W.e)); }
     w = W;
     if (!bot_play(&w, (uint16_t)sectors, 2000000, &res)) {
@@ -97,7 +99,7 @@ static int trace(uint16_t seed, uint16_t sector, const char *moves)
     int i, n = (int)strlen(moves);
     World *wp = &W;
 #define w (*wp)
-    sim_init(seed);
+    sim_init(seed, mode);
     w.god = 1;
     w.sector = sector;
     w.sec_start = 0;
@@ -123,12 +125,12 @@ static int path(uint16_t seed, int sectors, const char *file)
     static uint8_t mac[200000], keys[2000000];
     uint32_t n, i;
     FILE *f;
-    sim_init(seed);
+    sim_init(seed, mode);
     w = W;
     res.path = mac;
     res.path_max = sizeof(mac);
     if (!bot_play(&w, (uint16_t)sectors, 4000000, &res)) { fprintf(stderr, "bot failed\n"); return 1; }
-    n = bot_replay(seed, mac, res.path_n, keys, sizeof(keys));
+    n = bot_replay(seed, mode, mac, res.path_n, keys, sizeof(keys));
     f = fopen(file, "w");
     if (!f) return 1;
     for (i = 0; i < n; i++) fprintf(f, "%02x\n", keys[i]);
@@ -146,7 +148,7 @@ static int replay(uint16_t seed, const char *file)
     unsigned k;
     unsigned long n = 0;
     if (!f) return 1;
-    sim_init(seed);
+    sim_init(seed, mode);
     while (fscanf(f, "%x", &k) == 1) {
         sim_step((uint8_t)k);
         n++;
@@ -174,12 +176,18 @@ static int cols(uint16_t seed, int n)
 
 int main(int argc, char **argv)
 {
+    if (argc >= 3 && !strcmp(argv[1], "-m")) {            /* -m MODE: 0 classic, 1 auto sprint, 2 auto run */
+        mode = (uint8_t)atoi(argv[2]);
+        argc -= 2;
+        argv += 2;
+    }
     if (argc >= 4 && !strcmp(argv[1], "cols")) return cols((uint16_t)strtoul(argv[2], 0, 0), atoi(argv[3]));
     if (argc >= 4 && !strcmp(argv[1], "replay")) return replay((uint16_t)strtoul(argv[2], 0, 0), argv[3]);
     if (argc >= 5 && !strcmp(argv[1], "path")) return path((uint16_t)strtoul(argv[2], 0, 0), atoi(argv[3]), argv[4]);
     if (argc >= 5 && !strcmp(argv[1], "trace")) return trace((uint16_t)strtoul(argv[2], 0, 0), (uint16_t)atoi(argv[3]), argv[4]);
     if (argc >= 4 && !strcmp(argv[1], "show")) { show((uint16_t)strtoul(argv[2], 0, 0), (uint16_t)atoi(argv[3])); return 0; }
     if (argc >= 4 && !strcmp(argv[1], "bot")) return bot((uint16_t)strtoul(argv[2], 0, 0), atoi(argv[3]), argc > 4);
-    fprintf(stderr, "usage: sppgen show SEED SECTOR | bot SEED SECTORS [god]\n");
+    fprintf(stderr, "usage: sppgen [-m MODE] show SEED SECTOR | bot SEED SECTORS [god] | path SEED SECTORS FILE"
+                    " | replay SEED FILE | trace SEED SECTOR MOVES | cols SEED N\n");
     return 2;
 }

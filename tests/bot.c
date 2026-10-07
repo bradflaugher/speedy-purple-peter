@@ -224,11 +224,11 @@ int bot_play(World *w, uint16_t sectors, uint32_t max_nodes, BotResult *res)
     return ok;
 }
 
-uint32_t bot_replay(uint16_t seed, const uint8_t *path, uint32_t n, uint8_t *keys, uint32_t max)
+uint32_t bot_replay(uint16_t seed, uint8_t mode, const uint8_t *path, uint32_t n, uint8_t *keys, uint32_t max)
 {
     uint32_t i, k = 0;
     int j;
-    sim_init(seed);
+    sim_init(seed, mode);
     for (i = 0; i < n; i++)
         for (j = 0; j < CHUNK; j++) {
             if (k < max) keys[k] = path[i];

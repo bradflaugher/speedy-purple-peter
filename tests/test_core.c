@@ -39,7 +39,7 @@ static void bench(void)
     uint16_t c;
     uint8_t r;
     on_bench = 1;
-    sim_init(0x1234);
+    sim_init(0x1234, MODE_CLASSIC);
     memset(W.e, 0, sizeof(W.e));
     W.god = 0;
     for (c = 0; c < LV_COLS; c++) flatten(c);
@@ -402,9 +402,38 @@ static void test_mechanics(void)
     CHECK(W.time == TIME_START && W.score >= s0 + 199u * 50, "time bonus: score +%lu time %u",
           (unsigned long)(W.score - s0), W.time);
 
+    /* the modes: classic walks without B; auto sprint always runs (B still shoots); auto run
+       always runs right, whatever the pad says */
+    {
+        static const uint8_t want[MODE_COUNT] = { 0, 1, 1 };
+        uint8_t m;
+        for (m = 0; m < MODE_COUNT; m++) {
+            bench();
+            W.mode = m;
+            for (i = 0; i < 60; i++) step(m == MODE_AUTORUN ? 0 : K_RIGHT);
+            CHECK(W.pvx == (want[m] ? PH_MAX_RUN : PH_MAX_WALK), "mode %u: speed %x", m, W.pvx);
+        }
+        bench();
+        W.mode = MODE_AUTORUN;
+        for (i = 0; i < 30; i++) step(K_LEFT);
+        CHECK(W.pvx > 0 && W.face == 0, "auto run ignores left (%d)", W.pvx);
+        bench();
+        W.mode = MODE_SPRINT;
+        W.power = PW_BLASTER;
+        W.py -= 16;
+        step(K_RIGHT);
+        step(K_RIGHT | K_B);
+        CHECK(W.shot[0].kind, "auto sprint: B still shoots");
+        bench();
+        W.mode = MODE_SPRINT;
+        W.px = 10 * 16;
+        for (i = 0; i < 36; i++) step(K_LEFT);
+        CHECK(W.pvx < -PH_MAX_WALK, "auto sprint runs left too (%d)", W.pvx);
+    }
+
     /* falling into a pit costs a life and restarts the checkpoint sector with full time */
     on_bench = 0;
-    sim_init(0x55);
+    sim_init(0x55, MODE_CLASSIC);
     W.god = 1;
     {
         uint16_t start = W.sec_start;
@@ -416,7 +445,7 @@ static void test_mechanics(void)
     }
 
     /* the clock: running out of time is a death; three deaths end the run */
-    sim_init(0x99);
+    sim_init(0x99, MODE_CLASSIC);
     for (i = 0; i < 3; i++) {
         int k;
         W.time = 1;
@@ -445,10 +474,10 @@ static void test_mechanics(void)
     /* determinism: two runs with the same inputs end identically */
     {
         static World a;
-        sim_init(0xBEEF);
+        sim_init(0xBEEF, MODE_CLASSIC);
         for (i = 0; i < 3000; i++) sim_step((uint8_t)((i % 50 < 30 ? K_A : 0) | K_RIGHT | K_B));
         a = W;
-        sim_init(0xBEEF);
+        sim_init(0xBEEF, MODE_CLASSIC);
         for (i = 0; i < 3000; i++) sim_step((uint8_t)((i % 50 < 30 ? K_A : 0) | K_RIGHT | K_B));
         CHECK(!memcmp(&a, &W, sizeof(World)), "determinism");
         {   /* the effects counter is right */
@@ -485,22 +514,25 @@ static void test_mechanics(void)
 }
 
 /* ------------------------------------------------------------------ bot */
-static void test_bot(int seeds, int sectors, int god)
+static void test_bot(int seeds, int sectors, int god, uint8_t mode)
 {
+    static const char *const names[MODE_COUNT] = { "", ", auto sprint", ", auto run" };
     int s, ok = 0;
     for (s = 1; s <= seeds; s++) {
         static World w;
         static BotResult res;
-        sim_init((uint16_t)(s * 0x9E1u));
+        sim_init((uint16_t)(s * 0x9E1u), mode);
         if (god) { W.god = 1; memset(W.e, 0, sizeof(W.e)); }
         w = W;
         res.path = 0;
         if (bot_play(&w, (uint16_t)sectors, 3000000, &res)) ok++;
-        else printf("  bot stuck: seed %04X, sector %u, column +%u%s\n", (unsigned)(s * 0x9E1u), res.best.sector,
-                    (unsigned)(((res.best.px >> 4) - res.best.sec_start) & 0xFFF), god ? " (terrain only)" : "");
+        else printf("  bot stuck: seed %04X, sector %u, column +%u%s%s\n", (unsigned)(s * 0x9E1u), res.best.sector,
+                    (unsigned)(((res.best.px >> 4) - res.best.sec_start) & 0xFFF), god ? " (terrain only)" : "",
+                    names[mode]);
     }
-    CHECK(ok == seeds, "bot (%s) cleared %d sectors on %d/%d seeds", god ? "terrain" : "with enemies", sectors, ok, seeds);
-    printf("bot %s: %d/%d seeds x %d sectors\n", god ? "terrain" : "enemies", ok, seeds, sectors);
+    CHECK(ok == seeds, "bot (%s%s) cleared %d sectors on %d/%d seeds", god ? "terrain" : "with enemies", names[mode],
+          sectors, ok, seeds);
+    printf("bot %s%s: %d/%d seeds x %d sectors\n", god ? "terrain" : "enemies", names[mode], ok, seeds, sectors);
 }
 
 int main(int argc, char **argv)
@@ -509,8 +541,12 @@ int main(int argc, char **argv)
     test_physics();
     test_generator();
     test_mechanics();
-    test_bot(quick ? 8 : 40, 12, 1);
-    test_bot(quick ? 4 : 12, 8, 0);
+    test_bot(quick ? 8 : 40, 12, 1, MODE_CLASSIC);
+    test_bot(quick ? 4 : 12, 8, 0, MODE_CLASSIC);
+    /* the assisted modes: every sector can be cleared steering and jumping only, or jumping only */
+    test_bot(quick ? 4 : 12, 8, 0, MODE_SPRINT);
+    test_bot(quick ? 8 : 40, 12, 1, MODE_AUTORUN);
+    test_bot(quick ? 4 : 12, 8, 0, MODE_AUTORUN);
     printf("%d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
 }

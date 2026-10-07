@@ -197,6 +197,7 @@ typedef struct {
     uint32_t frames;         /* frames in play (the speedrun clock) */
     uint8_t over;            /* game over */
     uint8_t god;             /* test hook: no enemies, no harm (pits and the clock still kill) */
+    uint8_t mode;            /* MODE_*: how much of the running the game does for you */
 
     /* output of the last step */
     uint16_t sfx;
@@ -209,7 +210,15 @@ typedef struct {
 
 extern World W;          /* the world (one global: much faster code on the Game Boy) */
 
-void sim_init(uint16_t seed) SIM_BANKED;
+/* play modes (picked before a run; the score board keeps a best per mode) */
+enum {
+    MODE_CLASSIC,            /* B runs, as in the classic game */
+    MODE_SPRINT,             /* always running: just steer and jump (B still shoots) */
+    MODE_AUTORUN,            /* always running right: just jump (and shoot, and duck) */
+    MODE_COUNT
+};
+
+void sim_init(uint16_t seed, uint8_t mode) SIM_BANKED;
 void sim_step(uint8_t keys) SIM_BANKED;
 /* restart the checkpoint sector (w->sector at column w->sec_start): small Peter, full time */
 void sim_respawn(void) SIM_BANKED;

@@ -53,5 +53,6 @@ void save_load(void) BANKED;
 extern uint32_t best_score;
 extern uint16_t best_dist;
 extern uint16_t last_seed;
+extern uint8_t play_mode;            /* main.c: the mode the next run is played in */
 
 #endif

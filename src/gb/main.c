@@ -56,6 +56,7 @@ uint8_t dbg_gen_ly[4];
 uint8_t dbg_ent_ly[6];             /* lines each entity's full update took */
 #endif
 static uint16_t last_vbl;
+uint8_t play_mode;                 /* MODE_*: picked on the mode screen (screens.c) */
 
 static void lcd_isr(void)
 {
@@ -243,7 +244,7 @@ restart:
     DISPLAY_OFF;
     hud_on = 0;
     load_world_gfx();
-    sim_init(seed);
+    sim_init(seed, play_mode);
     dbg_steps = 0;
     render_reset();
     hud_draw_all();
