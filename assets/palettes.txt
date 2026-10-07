@@ -1,0 +1,39 @@
+# SPEEDY PURPLE PETER palettes.
+#
+# @bgpal NAME c0 c1 c2 c3     CGB BG palette (#rrggbb, stored as RGB555)
+# @objpal NAME c0 c1 c2 c3    CGB OBJ palette (c0 is transparent; any value)
+# @dmg bgp= obp0= obp1=       DMG palette registers
+#
+# The art uses colour indices with one meaning everywhere: 0 sky / transparent, 1 light,
+# 2 mid, 3 dark / outline. DMG shows exactly that (white sky). On CGB colour 0 is deep space
+# navy, and each palette picks colours 1-3 to read clearly against it: an index does not have
+# to be "lighter" on CGB (e.g. PAL_DECOR's rim colour 3 is a pale glow, PAL_HUD's 3 is white).
+#
+# PAL_GOLD keeps its contract name but is the supply pod's energy palette (cyan / magenta);
+# the floating star bit uses PAL_HUD (gold) instead.
+#
+# Colour 0 must be the same in every BG palette (checked).
+
+#      name        sky      1        2        3
+@bgpal PAL_SKY     #0c1030  #a070f0  #5c3cb0  #f4eaff
+@bgpal PAL_GROUND  #0c1030  #b4acd8  #7a6eaa  #3e336c
+@bgpal PAL_BRICK   #0c1030  #d8b8a0  #96705e  #4a2e30
+@bgpal PAL_GOLD    #0c1030  #9cfcff  #c04ae8  #3a2a80
+@bgpal PAL_TUBE    #0c1030  #8cf4dc  #2aa894  #0e4e58
+@bgpal PAL_DECOR   #0c1030  #4c3494  #8462d0  #d4bcff
+@bgpal PAL_HUD     #0c1030  #f8d048  #a070f0  #ffffff
+@bgpal PAL_POLE    #0c1030  #d0fff4  #7890b0  #34445e
+
+#       name          (transp) 1        2        3
+@objpal OPAL_PETER    #000000  #e8f4ff  #9a52e6  #3a1660
+@objpal OPAL_BLASTER  #000000  #ffffff  #ff74b8  #4a0c30
+@objpal OPAL_GREEN    #000000  #e4ffb4  #52c83a  #165a22
+@objpal OPAL_RED      #000000  #ffe4a0  #f04a30  #6a1410
+@objpal OPAL_ITEM     #000000  #fff0b0  #b45cf4  #4a1a78
+@objpal OPAL_GOLD     #000000  #ffffd0  #f8c020  #7a3c08
+@objpal OPAL_FX       #000000  #ffffff  #ff9a4c  #6a2810
+@objpal OPAL_BLOCK    #000000  #d8b8a0  #96705e  #4a2e30
+
+# DMG: BGP 0xE4 = identity (0 white .. 3 black). OBP0 identity for Peter, enemies and items.
+# OBP1 lightens colour 2 (light grey): the blaster suit, and the flashing frames.
+@dmg bgp=0xE4 obp0=0xE4 obp1=0xD0
