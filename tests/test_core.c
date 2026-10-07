@@ -2,7 +2,7 @@
  *
  *   physics    jump heights and distances, speeds, skids, air control (the classic constants)
  *   generator  determinism, sector rebuilds, the rules that keep every jump makeable
- *   mechanics  stomps, shells, capsules, bricks, star bits, beacons, deaths, the clock
+ *   mechanics  stomps, shells, capsules, bricks, star bits, checkpoints, deaths, the clock
  *   bot        the search bot plays many seeds through many sectors (terrain only, then with
  *              enemies), proving the generator never makes an unbeatable stretch
  *
@@ -46,7 +46,7 @@ static void bench(void)
     W.px = 4 * 16;
     W.py = GROUND_ROW * 16 - 16;
     W.time = 999;
-    W.beacon_col = W.flag_col = 0xFFFF;
+    W.check_col = 0xFFFF;
     bench_gen = W.gen_col;
     (void)r;
 }
@@ -227,7 +227,7 @@ static void test_generator(void)
     /* the rules over many seeds and sectors */
     for (seed = 0; seed < 200; seed++) {
         Gen g;
-        int pit = 0, land = 99, beacons = 0, last_start = -1, col;
+        int pit = 0, land = 99, n_cp = 0, last_start = -1, col;
         uint8_t prev[LV_ROWS];
         gen_begin(&g, (uint16_t)(seed * 977u), 0);
         memset(prev, 0, sizeof(prev));
@@ -237,12 +237,18 @@ static void test_generator(void)
             uint8_t f = gen_column(&g, c, &s);
             uint8_t ground = c[GROUND_ROW] != T_SKY || c[GROUND_ROW - 1] != T_SKY;
             if (f & GEN_SECTOR_START) {
-                if (last_start >= 0) CHECK(beacons == 1, "seed %u: one beacon per sector (%d)", seed, beacons);
+                if (last_start >= 0) CHECK(n_cp == 1, "seed %u: one checkpoint per sector (%d)", seed, n_cp);
                 CHECK(last_start < 0 || col - last_start >= 60, "seed %u: sector too short %d", seed, col - last_start);
-                beacons = 0;
+                n_cp = 0;
                 last_start = col;
             }
-            if (f & GEN_BEACON) beacons++;
+            if (f & GEN_CHECKPOINT) {
+                n_cp++;
+                /* nothing marks a checkpoint: it is plain, solid ground */
+                CHECK(c[GROUND_ROW] == T_GROUND_TOP, "seed %u col %d: checkpoint on ground", seed, col);
+                for (r = 0; r < GROUND_ROW; r++)
+                    CHECK(c[r] != T_POLE && c[r] != T_POLE_TOP && c[r] != T_SOLID, "seed %u col %d: a marker", seed, col);
+            }
             if (c[GROUND_ROW] == T_SKY) {
                 pit++;
                 if (pit == 1) CHECK(land >= 2, "seed %u col %d: a %d-column island", seed, col, land);
@@ -382,17 +388,18 @@ static void test_mechanics(void)
     for (i = 0; i < 60 && W.e[1].state == ES_LIVE; i++) step(0);
     CHECK(W.e[1].state == ES_FALL, "the pod knocked the Gloop out");
 
-    /* the beacon: touching it scores by height, moves the checkpoint, counts time in */
+    /* a checkpoint: running past it moves the restart point, counts the time left into the score
+       (50 a unit) and refills the clock */
     bench();
-    W.beacon_col = 8;
+    W.check_col = 8;
     W.sector_next = 1;
     W.sec_start_next = 13;
     W.time = 200;
     s0 = W.score;
     for (i = 0; i < 60 && !W.sectors_done; i++) step(K_RIGHT | K_B);
-    CHECK(W.sectors_done == 1 && W.sector == 1 && W.sec_start == 13, "beacon checkpoint");
+    CHECK(W.sectors_done == 1 && W.sector == 1 && W.sec_start == 13, "checkpoint");
     for (i = 0; i < 200 && W.bonus; i++) step(K_RIGHT);
-    CHECK(W.time == TIME_START && W.score >= s0 + 100 + 199u * 50, "time bonus: score +%lu time %u",
+    CHECK(W.time == TIME_START && W.score >= s0 + 199u * 50, "time bonus: score +%lu time %u",
           (unsigned long)(W.score - s0), W.time);
 
     /* falling into a pit costs a life and restarts the checkpoint sector with full time */

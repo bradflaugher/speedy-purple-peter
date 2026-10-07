@@ -40,11 +40,12 @@ you only bump the block above the middle of your head.
 ## 2. The level (src/core/level.c)
 
 A sector is a pure function of `(seed, sector)`: a start stretch (16 flat columns and a power-up
-pod in sector 0, 6 later), 12 + min(sector, 8) body segments, then the end staircase and the
-beacon. Segments: flat ground (maybe with enemies), pits, capsule rows (`B?B?B`, spaced pods,
-bricks hiding things, star-bit rows), a high brick row reached from a low one, tubes (with a
-Chomper later on), stair pyramids (with a gap later on), floating platforms over wide pits, star
-bit arcs and comet launchers. Every hazard is followed by at least two flat columns.
+pod in sector 0, 6 later), 12 + min(sector, 8) body segments, then the checkpoint: one column of
+plain ground that nothing marks (the run never visibly ends). Segments: flat ground (maybe with
+enemies), pits, capsule rows (`B?B?B`, spaced pods, bricks hiding things, star-bit rows), a high
+brick row reached from a low one, tubes (with a Chomper later on), stair pyramids (with a gap
+later on), floating platforms over wide pits, star bit arcs and comet launchers. Every hazard is
+followed by at least two flat columns.
 
 Rules that keep every jump makeable (enforced in `tests/test_core.c` over 200 seeds):
 
@@ -108,7 +109,8 @@ on every machine.
 ## 5. A compiler bug, and how it was caught
 
 `tests/test_rom.py` feeds the host bot's winning inputs to the ROM and compares the end state.
-The first run diverged at step 515: on the Game Boy the beacon fired 16 columns early. The cause
+The first run diverged at step 515: on the Game Boy the sector checkpoint (then a beacon pole)
+fired 16 columns early. The cause
 was SDCC (GBDK 4.3's 4.3.x and also 4.5.1) compiling `if ((int16_t)(px + 12 - pole) < 0)` into a
 sign test of the result's **low** byte. The line is now an unsigned comparison
 (`(uint16_t)(...) >= 0x8000`), with a comment, and the end-to-end test stays as the guard.

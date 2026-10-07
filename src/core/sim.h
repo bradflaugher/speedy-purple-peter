@@ -97,7 +97,7 @@ enum { SC_100, SC_200, SC_400, SC_500, SC_800, SC_1000, SC_2000, SC_4000, SC_500
 #define EV_POWERDOWN 0x0200
 #define EV_1UP       0x0400
 #define EV_SHOT      0x0800
-#define EV_FLAG      0x1000
+#define EV_CHECKPOINT 0x1000      /* passed a sector checkpoint */
 #define EV_TICK      0x2000
 #define EV_LAUNCH    0x4000
 #define EV_DIE       0x8000
@@ -167,10 +167,7 @@ typedef struct {
     uint16_t sec_start_next; /* first column of the sector being generated */
     uint16_t sector;         /* the checkpoint sector */
     uint16_t sector_next;    /* sector of the generator */
-    uint16_t beacon_col;     /* the next beacon's column, 0xFFFF until generated or touched */
-    uint16_t flag_col;       /* where the beacon flag is drawn (0xFFFF: none) */
-    int16_t flag_y;          /* the flag's top */
-    uint8_t flag_drop;       /* the flag is sliding down */
+    uint16_t check_col;      /* the next checkpoint's column, 0xFFFF until generated or passed */
     uint16_t rngs;           /* the simulation's own random stream (comet timing) */
 
     Ent e[MAX_ENTS];
@@ -192,7 +189,7 @@ typedef struct {
     uint8_t coins, lives;
     uint16_t time;           /* time units left */
     uint8_t time_sub;
-    uint16_t bonus;          /* time units still being counted into the score at a beacon */
+    uint16_t bonus;          /* time units still being counted into the score at a checkpoint */
     uint8_t hurry;
     uint16_t dist;           /* furthest column reached, counted from the start (saturates) */
     uint16_t far_col;        /* furthest camera column so far (absolute, wraps) */

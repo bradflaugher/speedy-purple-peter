@@ -35,7 +35,7 @@ const uint16_t dbg_world_off[] = {
     offsetof(World, frames), offsetof(World, sectors_done), offsetof(World, dist), offsetof(World, time),
     offsetof(World, cam_x), offsetof(World, over), offsetof(World, coins), offsetof(World, seed),
     offsetof(World, ground), offsetof(World, nova_t), offsetof(World, cam_y), offsetof(World, god),
-    sizeof(World), offsetof(World, beacon_col), offsetof(World, gen_col), offsetof(World, lv),
+    sizeof(World), offsetof(World, check_col), offsetof(World, gen_col), offsetof(World, lv),
     offsetof(World, bonus), offsetof(World, gen), offsetof(World, e)
 };
 

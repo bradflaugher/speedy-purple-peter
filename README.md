@@ -12,16 +12,16 @@
 <p align="center">
   <img src="docs/screens/cgb_title.png" width="240" alt="Title screen with the seed">
   <img src="docs/screens/cgb_start.png" width="240" alt="The opening of the run: supply pods and meteorite blocks">
-  <img src="docs/screens/cgb_beacon.png" width="240" alt="A beacon: the checkpoint at the end of a sector">
+  <img src="docs/screens/cgb_run2.png" width="240" alt="Further along: tubes, star bits and the endless ground">
 </p>
 
 ---
 
 Peter is a little astronaut in a purple space suit, and the run in front of him has no end. It plays
 like a classic 1985 first level, the one everybody knows by heart: run, jump, stomp, bump the
-blocks, grab the power-ups, slide down past the pole and keep going. Here it simply never stops.
-Every few hundred metres a **beacon** marks the end of a sector; touch it, bank your leftover time as
-points, and you are straight into the next sector. No cutscene, no loading, no break.
+blocks, grab the power-ups. Except this level never ends: no flagpole, no castle, no cutscene, no
+loading, no break. It is one endless run, and the only thing that matters is how far you get and
+how much you score on the way.
 
 The level is generated from a **seed** as you go. The same seed is always the same run, so you can
 race your friends on identical ground: pick a seed on the title screen and share it.
@@ -54,13 +54,13 @@ race your friends on identical ground: pick a seed on the title screen and share
   | **Supernova** | the star | invincible for ten seconds |
   | **Star bits** | coins | 200 points; 100 of them give a life |
   | **Tubes** | pipes | |
-  | **Beacon** | the flagpole | the higher you touch it, the more it scores; your remaining time counts in at 50 a tick |
 
 - **It's all about the score.** Stomps chain (100, 200, 400 ... up to a 1UP) while you stay in
-  the air, a kicked pod's victims chain too, the beacon pays for height, and **every beacon turns
-  your leftover time into points**: the faster you run a sector, the more it's worth. The clock
-  (300 at the start of each sector) ticks one unit every 24 frames; when it hits 100 the music
-  hurries.
+  the air, a kicked pod's victims chain too, and **the clock pays for speed**: the run is cut into
+  invisible sectors of a few hundred metres, and as you run past the end of one, the time you
+  have left counts into your score at 50 a unit (you hear it tick) and the clock refills. Nothing
+  marks the spot and you never slow down; the S counter on the HUD goes up. The clock (300 at the
+  start of each sector) ticks one unit every 24 frames; when it hits 100 the music hurries.
 - **Lives and checkpoints.** You start with three lives. Losing one puts you back at the start of
   the sector you are in, rebuilt exactly as it was. Lose them all and the run is over: score,
   distance, sectors, run time and seed are shown, and your best score and distance are saved.
@@ -114,7 +114,7 @@ frames per machine, the Game Boy Color never misses one and the DMG misses 2.
 
 ```
 src/core/   the game itself, portable C (SDCC for the Game Boy, gcc for the tests and tools)
-  sim.c         Peter, the classic physics, blocks, the level ring, camera, clock, beacons
+  sim.c         Peter, the classic physics, blocks, the level ring, camera, clock, checkpoints
   ents.c        enemies, power-ups, plasma shots, effects
   level.c       the generator: sectors of segments, (seed, sector) -> columns
   tiles.h sim.h level.h sim_int.h

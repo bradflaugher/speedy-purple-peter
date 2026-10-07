@@ -53,8 +53,6 @@ void ents_spawn(uint16_t col, uint8_t sp) SIM_BANKED
  * calculation (the copy is 16 bytes in assembly). cur is the slot. */
 static Ent E;
 static Ent *cur;
-static Ent *act[MAX_ENTS];          /* this frame's live entities (after their update) */
-static uint8_t n_act;
 static Ent *const slots = &W.e[0];  /* (W.e itself is out of reach under the macro below) */
 
 typedef char ent_is_16_bytes[sizeof(Ent) == 16 ? 1 : -1];   /* ent_copy copies 16 */
@@ -120,8 +118,9 @@ static void ent_copy(void *dst, const void *src) __naked     /* 16 bytes; dst in
 #else
 static void ent_copy(void *dst, const void *src) { memcpy(dst, src, sizeof(Ent)); }
 #endif
-/* a bit (1 << slot) for every used slot whose x is in [x0, x0 + 30]: the cheap first test of a
-   16x16 box overlap (x0 = x - 15) */
+/* a bit (1 << slot) for every used slot whose x is in [x0, x0 + near_w - 1]: the cheap first test
+   of an overlap (for 16x16 boxes, x0 = x - 15 and near_w = 31) */
+static uint8_t near_w;
 #if defined(__SDCC) && defined(__PORT_sm83)
 static uint8_t near_t;
 static uint8_t near_x(const Ent *s, uint16_t x0) __naked     /* s in DE, x0 in BC; result in A */
@@ -143,8 +142,9 @@ static uint8_t near_x(const Ent *s, uint16_t x0) __naked     /* s in DE, x0 in B
         ld  a, (hl)
         sbc a, b
         jr  nz, 2$
+        ld  hl, #_near_w
         ld  a, (_near_t)
-        cp  a, #31
+        cp  a, (hl)
         jr  nc, 2$
         ld  a, e
         or  a, d
@@ -169,7 +169,7 @@ static uint8_t near_x(const Ent *s, uint16_t x0)
 {
     uint8_t i, m = 0;
     for (i = 0; i < MAX_ENTS; i++)
-        if (s[i].kind && (uint16_t)(s[i].x - x0) <= 30) m |= (uint8_t)(1 << i);
+        if (s[i].kind && (uint16_t)(s[i].x - x0) < near_w) m |= (uint8_t)(1 << i);
     return m;
 }
 #endif
@@ -290,6 +290,7 @@ static void update_ent(void)
         } else {                                           /* sliding: knock others over */
             SST Ent *o;
             SST uint8_t m;
+            near_w = 31;
             m = near_x(slots, (uint16_t)(e->x - 15));    /* the boxes (16x16) overlap */
             for (o = slots; m; o++, m >>= 1) {
                 if (!(m & 1) || o == cur) continue;
@@ -337,16 +338,16 @@ static void update_ent(void)
    a frame, so a turn a frame or two late is invisible, and a crowd costs a few checks a frame. */
 static void bump_one(Ent *a)
 {
-    Ent *b;
-    int16_t dx, dy;
+    SST Ent *b;
+    SST int16_t dx, dy;
+    SST uint8_t m;
     if (!(a->state == ES_LIVE && (is_walker(a->kind) || ((a->kind == E_SHELL || a->kind == E_SHELL_RED) && !a->vx))))
         return;
-    uint8_t i;
-    for (i = 0; i < n_act; i++) {
-        b = act[i];
-        if (b == a || !b->kind) continue;
+    near_w = 29;
+    m = near_x(slots, (uint16_t)(a->x - 14));            /* within 14 px */
+    for (b = slots; m; b++, m >>= 1) {
+        if (!(m & 1) || b == a) continue;
         dx = (int16_t)(b->x - a->x);
-        if (dx > 14 || dx < -14) continue;
         if (!is_walker(a->kind) && !is_walker(b->kind)) continue;     /* two resting pods */
         if (!(is_walker(b->kind) || ((b->kind == E_SHELL || b->kind == E_SHELL_RED) && !b->vx))) continue;
         if (b->state != ES_LIVE) continue;
@@ -366,20 +367,20 @@ static void ent_bumps(void)
 
 static void peter_vs_ents(void)
 {
-    SST uint8_t h, i;
+    SST uint8_t h, m;
     SST Ent *e;
     SST int16_t px0, px1, py0, py1, feet, ex, top;
+    near_w = 41;
+    m = near_x(slots, (uint16_t)(w->px - 20));            /* within 20 px: the cheap test */
+    if (!m) return;
     h = (uint8_t)(w->power && !w->duck ? 32 : 16);
     px0 = (int16_t)(w->px - w->cam_x) + 3;
     px1 = px0 + 9;
     py0 = (int16_t)(w->py + (w->power ? 32 : 16) - h + 4);
     py1 = (int16_t)(w->py + (w->power ? 32 : 16) - 1);
     feet = (int16_t)(py1 + 1);
-    for (i = 0; i < n_act; i++) {
-        e = act[i];
-        if (e->kind == E_CANNON || e->state != ES_LIVE) continue;
-        ex = (int16_t)(e->x - w->px);
-        if (ex > 20 || ex < -20) continue;                  /* far apart: the cheap test */
+    for (e = slots; m; e++, m >>= 1) {
+        if (!(m & 1) || e->kind == E_CANNON || e->state != ES_LIVE) continue;
         ex = (int16_t)(e->x - w->cam_x);
         if (e->kind == E_CHOMP) {
             int16_t mouth = (int16_t)(e->chain * 16);
@@ -640,9 +641,8 @@ static void chomp_step(Ent *e)
 
 void ents_update(void) SIM_BANKED
 {
-    Ent *e;
+    SST Ent *e;
     uint8_t n = 0;
-    n_act = 0;
     PROF(5);
     for (e = w->e; e != w->e + MAX_ENTS; e++)
         if (e->kind) {
@@ -659,14 +659,12 @@ void ents_update(void) SIM_BANKED
                     e->x = nx;
                     e->xs = (uint8_t)(sum & 0xFF);
                     e->t++;
-                    act[n_act++] = e;
                     continue;
                 }
             }
             if (e->kind == E_CHOMP && e->state == ES_LIVE
                 && (uint16_t)((int16_t)(e->x - w->cam_x) + 48) <= 48 + 272) {
                 chomp_step(e);
-                act[n_act++] = e;
                 continue;
             }
             ENT_PROF_A();
@@ -675,7 +673,6 @@ void ents_update(void) SIM_BANKED
             update_ent();
             ent_copy(e, &E);
             ENT_PROF_B(e - w->e);
-            if (e->kind) act[n_act++] = e;
         }
     w->n_ents = n;
     PROF(6);

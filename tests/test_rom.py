@@ -26,11 +26,11 @@ SEED = 0x1985                     # the title's default seed on a fresh save
 # keep in step with dbg_world_off[] in src/gb/main.c
 FIELDS = ['px', 'py', 'pvx', 'pvy', 'power', 'pstate', 'lives', 'score', 'frames', 'sectors_done',
           'dist', 'time', 'cam_x', 'over', 'coins', 'seed', 'ground', 'nova_t', 'cam_y', 'god', 'size',
-          'beacon_col', 'gen_col', 'lv', 'bonus', 'gen', 'e']
+          'check_col', 'gen_col', 'lv', 'bonus', 'gen', 'e']
 SIZES = {'px': 2, 'py': -2, 'pvx': -2, 'pvy': -2, 'power': 1, 'pstate': 1, 'lives': 1, 'score': 4,
          'frames': 4, 'sectors_done': 2, 'dist': 2, 'time': 2, 'cam_x': 2, 'over': 1, 'coins': 1,
          'seed': 2, 'ground': 1, 'nova_t': 2, 'cam_y': 1, 'god': 1,
-         'beacon_col': 2, 'gen_col': 2, 'bonus': 2}
+         'check_col': 2, 'gen_col': 2, 'bonus': 2}
 BUTTONS = [(0x01, 'right'), (0x02, 'left'), (0x04, 'up'), (0x08, 'down'), (0x10, 'a'), (0x20, 'b'),
            (0x40, 'select'), (0x80, 'start')]
 PS_PLAY, PS_GROW, PS_SHRINK, PS_DEAD, PS_OVER = range(5)

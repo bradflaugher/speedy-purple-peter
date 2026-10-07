@@ -38,18 +38,13 @@ uint8_t sim_peter_h(void) SIM_BANKED
 #define GEN_MIN 16
 #define GEN_URGENT 13
 
-/* one column of the level; returns nothing, keeps the beacon and sector bookkeeping */
+/* one column of the level; returns nothing, keeps the checkpoint and sector bookkeeping */
 static void gen_one(void)
 {
     uint8_t k = (uint8_t)(w->gen_col & (LV_COLS - 1));
     uint8_t f = gen_column(&w->gen, w->lv[k], &w->spawn[k]);
         if (f & GEN_SECTOR_START) { w->sec_start_next = w->gen_col; w->sector_next = w->gen.sector; }
-        if (f & GEN_BEACON) {
-            w->beacon_col = w->gen_col;
-            w->flag_col = w->gen_col;
-            w->flag_y = 32;
-            w->flag_drop = 0;
-        }
+        if (f & GEN_CHECKPOINT) w->check_col = w->gen_col;
         w->gen_col = (uint16_t)((w->gen_col + 1) & COLMASK);
 }
 
@@ -89,8 +84,7 @@ void sim_respawn(void) SIM_BANKED
     gen_begin(&w->gen, w->seed, w->sector);
     w->gen_col = w->sec_start;
     w->spawn_col = w->sec_start;
-    w->beacon_col = 0xFFFF;
-    w->flag_col = 0xFFFF;
+    w->check_col = 0xFFFF;
     memset(w->e, 0, sizeof(w->e));
     memset(&w->item, 0, sizeof(w->item));
     memset(w->shot, 0, sizeof(w->shot));
@@ -447,22 +441,16 @@ static void peter_physics(void)
     if (w->py > LV_ROWS * 16 + 8) die(1);
 }
 
-/* the beacon: touch the pole */
-
-static void beacon(void)
+/* the checkpoint: the sector's last column. Nothing marks it (the level just goes on): running
+   past it moves the restart point on, refills the clock and counts the time left into the score */
+static void checkpoint(void)
 {
-    uint16_t pole;
-    uint8_t step;
-    if (w->beacon_col == 0xFFFF) return;
-    pole = (uint16_t)(w->beacon_col * 16 + 7);
-    /* (written as an unsigned test: SDCC 4.3-4.5 miscompiles "(int16_t)(px + 12 - pole) < 0"
-       here, testing the low byte's sign; tests/test_rom.py would catch it) */
-    if ((uint16_t)(w->px + 12 - pole) >= 0x8000u) return;
-    step = w->py < 16 ? SC_5000 : w->py < 56 ? SC_2000 : w->py < 96 ? SC_800 : w->py < 128 ? SC_400 : SC_100;
-    award(step, (uint16_t)(pole + 2), w->py);
-    w->beacon_col = 0xFFFF;
-    w->flag_drop = 1;
-    w->sfx |= EV_FLAG;
+    if (w->check_col == 0xFFFF) return;
+    /* (written as an unsigned test: SDCC 4.3-4.5 miscompiles "(int16_t)(px + 12 - x) < 0" here,
+       testing the low byte's sign; tests/test_rom.py would catch it) */
+    if ((uint16_t)(w->px + 12 - (uint16_t)(w->check_col * 16 + 7)) >= 0x8000u) return;
+    w->check_col = 0xFFFF;
+    w->sfx |= EV_CHECKPOINT;
     w->sector = w->sector_next;
     w->sec_start = w->sec_start_next;
     w->sectors_done++;
@@ -570,14 +558,13 @@ void sim_step(uint8_t keys) SIM_BANKED
     peter_physics();
     PROF(1);
     if (w->pstate != PS_PLAY) { camera(); return; }
-    beacon();
+    checkpoint();
     camera();
     PROF(2);
     generate();
     PROF(3);
     ents_update();
     PROF(4);
-    if (w->flag_drop && w->flag_y < (GROUND_ROW - 2) * 16) w->flag_y += 2;
     if (w->pstate == PS_PLAY) tick_time();
     PROF(15);
 }

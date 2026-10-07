@@ -1,7 +1,8 @@
 /* level.h - SPEEDY PURPLE PETER level generator.
  *
  * The level is one endless run, generated column by column, left to right, in "sectors" of
- * roughly 150-250 columns. Each sector ends with a beacon (the checkpoint). A sector is a pure
+ * roughly 150-250 columns. Each sector ends in a checkpoint (nothing marks it: the level just goes
+ * on). A sector is a pure
  * function of (seed, sector), so dying sends you back to the start of the sector and it is
  * rebuilt identically. Portable C: builds with SDCC (Game Boy) and gcc (host tests, tools). */
 #ifndef SPP_LEVEL_H
@@ -55,7 +56,7 @@ typedef struct {
 
 /* returned by gen_column */
 #define GEN_SECTOR_START 0x01   /* this column is the first column of a new sector */
-#define GEN_BEACON       0x02   /* this column holds the beacon pole */
+#define GEN_CHECKPOINT   0x02   /* this column is the sector's checkpoint (its last column) */
 
 void gen_begin(Gen *g, uint16_t seed, uint16_t sector) GEN_BANKED;
 /* Writes the next column's 13 cells (top to bottom) and its spawn byte. */

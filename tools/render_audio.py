@@ -20,7 +20,7 @@ LCC = os.environ.get("LCC", "/opt/gbdk/bin/lcc")
 
 SONGS = ["none", "main", "nova", "title", "death", "gameover", "hurry"]
 SFX = ["jump", "jump_big", "stomp", "kick", "bump", "break", "coin", "sprout", "powerup",
-       "powerdown", "1up", "shot", "flag", "tick", "pause", "launch", "select"]
+       "powerdown", "1up", "shot", "checkpoint", "tick", "pause", "launch", "select"]
 
 MAIN_C = r"""
 #include <gb/gb.h>

@@ -440,7 +440,7 @@ static const uint8_t x_1up2[]    = { SQ2(0x40, 0x82, X_E5), W(5), N2(0x82, X_G5)
 static const uint8_t x_shot[]    = { 0x20, 0x00, 0x21, 0xD1, 0x22, 0x09, 0x23, 0x80, W(1), NZP(0x1A), W(1),
                                      NZP(0x2B), W(1), NZP(0x3C), W(1), NZP(0x4D), W(1), NZP(0x5E), W(2),
                                      SEND };
-static const uint8_t x_flag[]    = { SQ1(0x4F, 0x80, 0xD5, 1985), W(52), SWP_OFF, W(4), SEND };
+static const uint8_t x_checkpoint[]    = { SQ1(0x4F, 0x80, 0xD5, 1985), W(52), SWP_OFF, W(4), SEND };
 static const uint8_t x_tick[]    = { SQ1(0x08, 0x40, 0x51, 1985), W(2), SEND };
 static const uint8_t x_pause[]   = { SQ1(0x08, 0x80, 0xC1, X_A6), W(4), N1(0xA1, X_E6), W(4),
                                      N1(0xC3, X_A6), W(20), SEND };
@@ -463,7 +463,7 @@ static const uint8_t x_select[]  = { SQ1(0x08, 0x80, 0xC1, X_E6), W(3), N1(0xC1,
     /* POWERDOWN */ X(6, 1, x_pwdown, 0, 0) \
     /* 1UP       */ X(6, 3, x_1up1, x_1up2, 0) \
     /* SHOT      */ X(3, 8, 0, 0, x_shot) \
-    /* FLAG      */ X(6, 1, x_flag, 0, 0) \
+    /* CHECKPOINT */ X(6, 1, x_checkpoint, 0, 0) \
     /* TICK      */ X(1, 1, x_tick, 0, 0) \
     /* PAUSE     */ X(7, 1, x_pause, 0, 0) \
     /* LAUNCH    */ X(5, 9, x_launch1, 0, x_launch4) \

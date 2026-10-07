@@ -550,7 +550,6 @@ static void draw_sprites(void)
             put1(SPR_SHOT, (uint8_t)(pl_fx | ((frame_count & 2) ? S_FLIPX : 0) | ((frame_count & 4) ? S_FLIPY : 0)));
     draw_ents();
     draw_item();
-    if (W.flag_col != 0xFFFF && at((uint16_t)(W.flag_col * 16 - 8), W.flag_y)) put2(SPR_FLAG, pl_gold);
     draw_fx();
     /* hide the objects left over from the last frame (only those) */
     {
@@ -653,7 +652,7 @@ static void sounds(void)
     if (s & EV_POWERUP) sfx_play(SFX_POWERUP);
     else if (s & EV_POWERDOWN) sfx_play(SFX_POWERDOWN);
     else if (s & EV_1UP) sfx_play(SFX_1UP);
-    else if (s & EV_FLAG) sfx_play(SFX_FLAG);
+    else if (s & EV_CHECKPOINT) sfx_play(SFX_CHECKPOINT);
     else if (s & EV_SPROUT) sfx_play(SFX_SPROUT);
     else if (s & EV_BREAK) sfx_play(SFX_BREAK);
     else if (s & EV_STOMP) sfx_play(SFX_STOMP);

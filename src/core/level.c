@@ -2,7 +2,7 @@
  *
  * A sector is: a short start stretch, a run of "segments" (the vocabulary of a classic first
  * level: capsule rows, tubes, pits, stair pyramids, high brick rows, enemies on the flats),
- * then the end staircase and the beacon pole. Segments never overlap, and a short flat stretch
+ * then the checkpoint column (plain ground: the level never visibly ends). Segments never overlap, and a short flat stretch
  * separates hazards, so every jump the generator makes is one the physics can make (the host
  * tests prove it by playing every sector with a search bot). */
 #ifdef __SDCC
@@ -165,9 +165,8 @@ static void start_seg(Gen *g, uint8_t seg)
         g->len = 3;
         g->a = rrange(g, 1, 2);
         break;
-    case SEG_END:               /* a: staircase height */
-        g->a = (uint8_t)(4 + (d > 8 ? 4 : d / 2));
-        g->len = (uint8_t)(g->a + 1 + 3 + 1 + 3);
+    case SEG_END:               /* the sector's last column: its (invisible) checkpoint */
+        g->len = 1;
         break;
     }
 }
@@ -396,16 +395,8 @@ uint8_t gen_column(Gen *g, uint8_t *c, uint8_t *spawn) GEN_BANKED
             *spawn = SPAWN(SP_CANNON, GROUND_ROW - g->a);
         }
         break;
-    case SEG_END:
-        h = g->a;
-        if (p < h) stack(c, (uint8_t)(p + 1));
-        else if (p == h) stack(c, h);
-        else if (p == h + 4) {                   /* the beacon */
-            c[GROUND_ROW - 1] = T_SOLID;
-            for (r = 2; r < GROUND_ROW - 1; r++) c[r] = T_POLE;
-            c[1] = T_POLE_TOP;
-            ret |= GEN_BEACON;
-        }
+    case SEG_END:                                /* plain ground: nothing marks a checkpoint */
+        ret |= GEN_CHECKPOINT;
         break;
     }
     GPROF(2);
