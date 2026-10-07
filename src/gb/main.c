@@ -287,12 +287,30 @@ restart:
     }
 }
 
+/* Colour hardware is told by what it does, not by the boot value of A (some emulators boot a DMG
+   with A = 0x11) or by unused register bits (many emulators read VBK back without its 0xFE bits):
+   only a CGB keeps two VRAM banks apart. Needs the LCD off. */
+static uint8_t probe_cgb(void)
+{
+    volatile uint8_t *p = (volatile uint8_t *)0x9FFF;  /* the corner of the window map */
+    uint8_t r;
+    VBK_REG = 1;
+    *p = 0x5A;
+    VBK_REG = 0;
+    *p = 0xA5;               /* on a DMG this overwrites the 0x5A: there is only one bank */
+    VBK_REG = 1;
+    r = (uint8_t)(*p == 0x5A);
+    *p = 0;
+    VBK_REG = 0;
+    *p = 0;
+    return r;
+}
+
 void main(void)
 {
-    /* (VBK_REG reads back 0xFE/0xFF only on a real CGB: some emulators boot a DMG with A = 0x11) */
-    is_cgb = (uint8_t)(_cpu == CGB_TYPE && (VBK_REG & 0xFE) == 0xFE);
-    if (is_cgb) cpu_fast();
     DISPLAY_OFF;
+    is_cgb = probe_cgb();
+    if (is_cgb) cpu_fast();
     ENABLE_RAM;
     SWITCH_RAM(0);
     save_load();
