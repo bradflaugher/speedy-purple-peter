@@ -35,13 +35,13 @@ uint8_t sim_peter_h(void) SIM_BANKED
 }
 
 #define GEN_AHEAD 22
+#define GEN_MIN 16
 
-static void generate(void)
+/* one column of the level; returns nothing, keeps the beacon and sector bookkeeping */
+static void gen_one(void)
 {
-    uint16_t cc = (uint16_t)(w->cam_x >> 4);
-    while ((uint16_t)((w->gen_col - cc) & COLMASK) < GEN_AHEAD) {
-        uint8_t k = (uint8_t)(w->gen_col & (LV_COLS - 1));
-        uint8_t f = gen_column(&w->gen, w->lv[k], &w->spawn[k]);
+    uint8_t k = (uint8_t)(w->gen_col & (LV_COLS - 1));
+    uint8_t f = gen_column(&w->gen, w->lv[k], &w->spawn[k]);
         if (f & GEN_SECTOR_START) { w->sec_start_next = w->gen_col; w->sector_next = w->gen.sector; }
         if (f & GEN_BEACON) {
             w->beacon_col = w->gen_col;
@@ -50,6 +50,20 @@ static void generate(void)
             w->flag_drop = 0;
         }
         w->gen_col = (uint16_t)((w->gen_col + 1) & COLMASK);
+}
+
+/* The level is generated GEN_MIN..GEN_AHEAD columns ahead of the camera. Within that slack a
+   column is only made on a frame with at most one enemy about: generating is the slowest thing
+   the Game Boy does in a frame, and so is a crowd, so the two are kept apart. */
+static void generate(void)
+{
+    uint16_t cc = (uint16_t)(w->cam_x >> 4);
+    uint8_t ahead = (uint8_t)((w->gen_col - cc) & COLMASK);
+    while (ahead < GEN_MIN) { gen_one(); ahead++; }
+    if (ahead < GEN_AHEAD && w->n_ents < 2) {
+        /* starting a new segment (rolling its layout) is the slow part: give it its own frame */
+        if (w->gen.pos >= w->gen.len) gen_prepare(&w->gen);
+        else gen_one();
     }
     while ((uint16_t)((w->spawn_col - cc) & COLMASK) <= 11 && w->spawn_col != w->gen_col) {
         uint8_t s = w->spawn[w->spawn_col & (LV_COLS - 1)];
@@ -94,6 +108,7 @@ void sim_respawn(void) SIM_BANKED
     w->anim = 0;
     w->run_t = 0;
     generate();
+    while ((uint8_t)((w->gen_col - (w->cam_x >> 4)) & COLMASK) < GEN_AHEAD) gen_one();  /* all of it now */
     w->redraw = 1;
     w->mev |= MEV_RESPAWN;
 }
@@ -346,9 +361,10 @@ static void peter_physics(void)
         uint8_t n, i, hitl = 0, hitr = 0;
         if (big) { ys[0] = (int16_t)(w->py + 6); ys[1] = (int16_t)(w->py + 16); ys[2] = (int16_t)(w->py + 27); n = 3; }
         else { ys[0] = (int16_t)(w->py + ht + 6); ys[1] = (int16_t)(w->py + ht + 12); n = 2; }
+        /* only the side he is moving towards (both when standing still) */
         for (i = 0; i < n; i++) {
-            if (solid_px((uint16_t)(w->px + 2), ys[i])) hitl = 1;
-            if (solid_px((uint16_t)(w->px + 13), ys[i])) hitr = 1;
+            if (w->pvx <= 0 && solid_px((uint16_t)(w->px + 2), ys[i])) hitl = 1;
+            if (w->pvx >= 0 && solid_px((uint16_t)(w->px + 13), ys[i])) hitr = 1;
         }
         if (hitr && !hitl) {
             w->px = (uint16_t)(((w->px + 13) & ~15) - 14);
@@ -545,5 +561,6 @@ void sim_step(uint8_t keys) SIM_BANKED
     PROF(4);
     if (w->flag_drop && w->flag_y < (GROUND_ROW - 2) * 16) w->flag_y += 2;
     if (w->pstate == PS_PLAY) tick_time();
+    PROF(15);
 }
 

@@ -64,7 +64,9 @@ def build_rom():
     rom = os.path.join(BUILD, "sndtest.gb")
     src = os.path.join(ROOT, "src", "gb")
     obj = os.path.join(BUILD, "sound.o")
-    subprocess.check_call([LCC, "-I" + src, "-I" + os.path.join(ROOT, "src", "core"), "-c", "-o",
+    # the game's compiler flags (Makefile CFLAGS_GB), so the cycle counts are the game's
+    subprocess.check_call([LCC, "-Wf--max-allocs-per-node5000", "-Wf--opt-code-speed",
+                           "-I" + src, "-I" + os.path.join(ROOT, "src", "core"), "-c", "-o",
                            obj, os.path.join(src, "sound.c")])
     subprocess.check_call([LCC, "-I" + src, "-Wl-m", "-Wl-j", "-o", rom, main, obj])
     return rom, obj

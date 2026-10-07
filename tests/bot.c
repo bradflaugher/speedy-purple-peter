@@ -109,7 +109,7 @@ static uint8_t policy(const World *w, int *hold)
     int16_t feet = (int16_t)(w->py + (w->power ? 32 : 16));
     int want = 0, i;
     if (w->ground) {
-        int look = 8 + (w->pvx > 0 ? (w->pvx >> 12) * 12 : 0), d;
+        int look = 8 + (w->pvx > 0 ? (w->pvx >> 12) * 18 : 0), d;
         for (d = 4; d <= look; d += 4) {
             uint16_t ax = (uint16_t)(w->px + 13 + d);
             if (solid_at(w, ax, (int16_t)(feet - 4)) || solid_at(w, ax, (int16_t)(feet - h + 4))) want = 1;

@@ -15,7 +15,7 @@
 # Colour 0 must be the same in every BG palette (checked).
 
 #      name        sky      1        2        3
-@bgpal PAL_SKY     #0c1030  #34478c  #7c8ed8  #f4f0ff
+@bgpal PAL_SKY     #0c1030  #a070f0  #5c3cb0  #f4eaff
 @bgpal PAL_GROUND  #0c1030  #b4acd8  #7a6eaa  #3e336c
 @bgpal PAL_BRICK   #0c1030  #d8b8a0  #96705e  #4a2e30
 @bgpal PAL_GOLD    #0c1030  #9cfcff  #c04ae8  #3a2a80

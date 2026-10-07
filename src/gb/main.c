@@ -48,7 +48,11 @@ uint8_t dbg_feed, dbg_fed_prev;
 uint16_t dbg_stop_at;
 uint8_t dbg_ring[256];
 uint8_t dbg_ly[8];
-uint8_t dbg_sim_ly[16];               /* LY at stages of the last frame (profiling) */
+uint8_t dbg_sim_ly[16];
+uint8_t dbg_slow[24];
+uint8_t dbg_hud_case, dbg_slow_hud;
+uint8_t dbg_gen_ly[4];
+uint8_t dbg_ent_ly[6];             /* lines each entity's full update took */             /* LY stamps inside gen_column */             /* dbg_ly + dbg_sim_ly of the last slow frame */               /* LY at stages of the last frame (profiling) */
 static uint16_t last_vbl;
 
 static void lcd_isr(void)
@@ -219,7 +223,12 @@ void frame_end(void)
     SCY_REG = scy;
     frame_count++;
     dbg_frames++;
-    if ((uint16_t)(sys_time - last_vbl) > 1) dbg_drops++;
+    if ((uint16_t)(sys_time - last_vbl) > 1) {
+        dbg_drops++;
+        memcpy(dbg_slow, dbg_ly, 8);            /* what the slow frame spent its time on */
+        memcpy(dbg_slow + 8, dbg_sim_ly, 16);
+        dbg_slow_hud = dbg_hud_case;
+    }
     last_vbl = sys_time;
 }
 
@@ -241,6 +250,8 @@ restart:
     SHOW_WIN;
     DISPLAY_ON;
     keys = joypad();
+    wait_vbl_done();
+    last_vbl = sys_time;           /* the setup above is not a slow game frame */
     for (;;) {
         read_input();
         if (dbg_feed) {

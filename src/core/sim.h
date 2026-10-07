@@ -174,6 +174,7 @@ typedef struct {
     uint16_t rngs;           /* the simulation's own random stream (comet timing) */
 
     Ent e[MAX_ENTS];
+    uint8_t n_ents;          /* enemies about (counted each frame) */
     Ent item;                /* one power-up at a time */
     Ent shot[MAX_SHOTS];
     Fx fx[MAX_FX];
@@ -184,6 +185,8 @@ typedef struct {
     /* run */
     uint16_t seed;
     uint32_t score;
+    uint8_t sdig[7];         /* the score's decimal digits (most significant first) */
+    uint8_t score_rev;       /* bumped whenever the score changes */
     uint8_t coins, lives;
     uint16_t time;           /* time units left */
     uint8_t time_sub;

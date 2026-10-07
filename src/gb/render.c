@@ -10,15 +10,16 @@
 
 #define COLMASK 0x0FFF
 #define SST static                  /* hot locals in static RAM: faster than the stack */
-#define VIEW_COLS 12                /* metatile columns drawn from the camera's column */
+extern uint8_t dbg_ly[8];          /* LY stamps of this frame (main.c); [0] = its start */
+#define VIEW_COLS 14                /* metatile columns drawn from the camera's column */
 
 static uint16_t drawn_col;
-static uint16_t last_gen;          /* the sim's gen_col last frame (spread the work out) */          /* next column to draw (the BG ring holds 16) */
+uint16_t dbg_built, dbg_dirty_drawn;          /* the sim's gen_col last frame (spread the work out) */          /* next column to draw (the BG ring holds 16) */
 static uint8_t tbuf[LV_ROWS * 4], abuf[LV_ROWS * 4];
 static uint8_t oam_n;
-static uint8_t hud_score[7], hud_coins = 0xFF, hud_lives = 0xFF, hud_sector_v = 0xFF;
+static uint8_t hud_coins = 0xFF, hud_lives = 0xFF, hud_sector_v = 0xFF;
 static uint16_t hud_time = 0xFFFF;
-static uint32_t hud_score_v;
+static uint8_t hud_score_rev;      /* W.score_rev when the score was last shown */
 static uint8_t anim_f, anim_t;
 
 /* ------------------------------------------------------------------ text */
@@ -99,24 +100,79 @@ static void vram_strip(uint8_t *dst, const uint8_t *src)
 }
 
 /* build a column into tp/ap (2 x 26 tiles and attributes) */
+/* the cell -> 4 tiles / 4 attributes tables with the look-alikes already merged (vis_map) */
+static uint8_t vt[T_COUNT][4], va[T_COUNT][4];
+static const uint8_t *bt_lv, *bt_tab;
+static uint8_t *bt_dst;
+static uint8_t bt_n;
+
+/* 13 cells from bt_lv -> 4 bytes each from bt_tab into bt_dst (the hot loop, in assembly) */
+static void build_asm(void) __naked
+{
+    __asm
+        ld  a, #13
+        ld  (_bt_n), a
+        ld  hl, #_bt_dst
+        ld  a, (hl+)
+        ld  e, a
+        ld  d, (hl)             ; de = dst
+        ld  hl, #_bt_lv
+        ld  a, (hl+)
+        ld  h, (hl)
+        ld  l, a                ; hl = lv
+    1$:
+        ld  a, (hl+)            ; the cell
+        push hl
+        ld  l, a
+        ld  h, #0
+        add hl, hl
+        add hl, hl              ; * 4
+        ld  a, (_bt_tab)
+        add a, l
+        ld  l, a
+        ld  a, (_bt_tab + 1)
+        adc a, h
+        ld  h, a
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl+)
+        ld  (de), a
+        inc de
+        ld  a, (hl)
+        ld  (de), a
+        inc de
+        pop hl
+        ld  a, (_bt_n)
+        dec a
+        ld  (_bt_n), a
+        jr  nz, 1$
+        ret
+    __endasm;
+}
+
 static void build_col(uint16_t col, uint8_t *tp, uint8_t *ap)
 {
-    SST uint8_t r, bumps, t;
-    SST const uint8_t *lv, *m;
     const Fx *f;
-    bumps = 0;
-    for (f = W.fx; f != W.fx + MAX_FX; f++) if (f->kind == FX_BUMP) bumps = 1;
-    lv = W.lv[(uint8_t)col & (LV_COLS - 1)];
-    for (r = 0; r < LV_ROWS; r++) {
-        t = vis_map[lv[r]];
-        if (bumps && t != T_SKY && bumping(col, r)) t = T_SKY;
-        m = ram_mt_tiles[t];
-        *tp++ = *m++; *tp++ = *m++; *tp++ = *m++; *tp++ = *m;
-        if (is_cgb) {
-            m = ram_mt_attr[t];
-            *ap++ = *m++; *ap++ = *m++; *ap++ = *m++; *ap++ = *m;
-        }
+    bt_lv = W.lv[(uint8_t)col & (LV_COLS - 1)];
+    bt_tab = &vt[0][0];
+    bt_dst = tp;
+    build_asm();
+    if (is_cgb) {
+        bt_tab = &va[0][0];
+        bt_dst = ap;
+        build_asm();
     }
+    /* a bouncing block is drawn as a sprite: its cell shows sky */
+    for (f = W.fx; f != W.fx + MAX_FX; f++)
+        if (f->kind == FX_BUMP && (f->x >> 4) == col) {
+            uint8_t *p = tp + (f->row << 2);
+            p[0] = p[1] = p[2] = p[3] = vt[T_SKY][0];
+            if (is_cgb) { p = ap + (f->row << 2); p[0] = p[1] = p[2] = p[3] = va[T_SKY][0]; }
+        }
 }
 
 /* draw a column at once (a fresh view) */
@@ -148,6 +204,10 @@ void render_reset(void) BANKED
 {
     uint8_t i;
     col_pending = 0;
+    for (i = 0; i < T_COUNT; i++) {
+        memcpy(vt[i], ram_mt_tiles[vis_map[i]], 4);
+        memcpy(va[i], ram_mt_attr[vis_map[i]], 4);
+    }
     uint16_t c = (uint16_t)(W.cam_x >> 4);
     for (i = 0; i < VIEW_COLS; i++) draw_col((uint16_t)((c + i) & COLMASK));
     drawn_col = (uint16_t)((c + VIEW_COLS) & COLMASK);
@@ -165,12 +225,17 @@ static void stream(void)
         int16_t d = (int16_t)((col - c) << 4) >> 4;          /* signed 12-bit distance */
         if (d > 128) col -= 256; else if (d < -128) col += 256;
         col &= COLMASK;
-        if ((uint16_t)((drawn_col - col - 1) & COLMASK) < 16) draw_cell(col, W.dirty_row[i]);
+        if ((uint16_t)((drawn_col - col - 1) & COLMASK) < 16) { draw_cell(col, W.dirty_row[i]); dbg_dirty_drawn = frame_count; }
     }
     /* the next column: built here, written by the VBlank handler over two VBlanks (the camera
        needs at least 6 frames to cross a column) */
-    if (W.gen_col != last_gen) { last_gen = W.gen_col; return; }   /* not on a generating frame */
-    if (!col_pending && (uint16_t)((drawn_col - c) & COLMASK) < VIEW_COLS) {
+    if (col_pending) return;
+    i = (uint8_t)((drawn_col - c) & COLMASK);
+    if (i >= VIEW_COLS) return;
+    /* not needed for another column: leave it for a quieter frame if this one is busy */
+    if (i >= VIEW_COLS - 2 && (uint8_t)(LY_REG - dbg_ly[0] + (LY_REG < dbg_ly[0] ? 154 : 0)) > 60) return;
+    {
+        dbg_built = frame_count;
         build_col(drawn_col, col_buf[0], col_buf[1]);
         col_dst = (uint8_t *)0x9800 + ((drawn_col & 15) << 1);
         col_pending = 2;
@@ -182,8 +247,9 @@ static void stream(void)
  * Written for SDCC: positions are turned into 8-bit OAM coordinates once (at()), then objects
  * are written with a byte pointer. Off-screen halves need no clipping: an OAM x of 0 or >= 168
  * and a y of 0 or >= 160 are invisible, and the 8-bit wrap puts everything off-screen there. */
-extern uint8_t dbg_ly[8];
 uint8_t dbg_sprl[4];
+uint8_t dbg_spr2[4];
+uint8_t dbg_hud_ly[4];
 static uint8_t ox, oy;              /* OAM x, y of the current object's top-left */
 static uint8_t *op8;                /* next free OAM byte */
 static uint8_t *oam_last = (uint8_t *)&shadow_OAM[40];   /* the end of last frame's objects */
@@ -218,15 +284,55 @@ static void put1(uint8_t tile, uint8_t prop)            /* one 8x16 object at (o
     op8 = p;
 }
 
-static void put2(uint8_t tile, uint8_t prop)            /* a 16x16 frame at (ox, oy) */
+/* a 16x16 frame at (ox, oy): two objects, the halves swapped when flipped. In assembly (it is
+   the inner loop of the sprite drawing); shadow OAM is page-aligned at 0xC000 in GBDK. */
+static uint8_t pt, pp;                  /* put2's tile and attributes */
+static void put2a(void) __naked
 {
-    uint8_t *p = op8, l = tile, r = (uint8_t)(tile + 2);
-    if (p >= OAM_END - 4) return;
-    if (prop & S_FLIPX) { l = r; r = tile; }
-    *p++ = oy; *p++ = ox; *p++ = l; *p++ = prop;
-    *p++ = oy; *p++ = (uint8_t)(ox + 8); *p++ = r; *p++ = prop;
-    op8 = p;
+    __asm
+        ld  hl, #_op8
+        ld  a, (hl+)
+        ld  h, (hl)
+        ld  l, a
+        ld  a, l
+        cp  #0x99                   ; room for two objects (l <= 0x98)?
+        ret nc
+        ld  a, (_pt)
+        ld  e, a
+        add a, #2
+        ld  d, a                    ; e = left half, d = right half
+        ld  a, (_pp)
+        bit 5, a                    ; S_FLIPX
+        jr  z, 1$
+        ld  a, e
+        ld  e, d
+        ld  d, a
+    1$:
+        ld  a, (_oy)
+        ld  (hl+), a
+        ld  a, (_ox)
+        ld  (hl+), a
+        ld  a, e
+        ld  (hl+), a
+        ld  a, (_pp)
+        ld  (hl+), a
+        ld  a, (_oy)
+        ld  (hl+), a
+        ld  a, (_ox)
+        add a, #8
+        ld  (hl+), a
+        ld  a, d
+        ld  (hl+), a
+        ld  a, (_pp)
+        ld  (hl+), a
+        ld  a, l
+        ld  (_op8), a
+        ld  a, h
+        ld  (_op8 + 1), a
+        ret
+    __endasm;
 }
+#define put2(t, p) (pt = (t), pp = (p), put2a())
 
 static void put4(uint8_t tile, uint8_t prop)            /* a 16x32 frame at (ox, oy) */
 {
@@ -373,9 +479,7 @@ static void draw_sprites(void)
         pl_red1 = S_PALETTE;
     }
     op8 = (uint8_t *)shadow_OAM;
-    dbg_ly[6] = LY_REG;
     draw_peter();
-    dbg_ly[7] = LY_REG;
     for (s = W.shot; s != W.shot + MAX_SHOTS; s++)
         if (s->kind && at(s->x, s->y))
             put1(SPR_SHOT, (uint8_t)(pl_fx | ((frame_count & 2) ? S_FLIPX : 0) | ((frame_count & 4) ? S_FLIPY : 0)));
@@ -383,14 +487,18 @@ static void draw_sprites(void)
     draw_ents();
     dbg_sprl[1] = LY_REG;
     draw_item();
+    dbg_spr2[0] = LY_REG;
     if (W.flag_col != 0xFFFF && at((uint16_t)(W.flag_col * 16 - 8), W.flag_y)) put2(SPR_FLAG, pl_gold);
+    dbg_spr2[1] = LY_REG;
     draw_fx();
+    dbg_spr2[2] = LY_REG;
     /* hide the objects left over from the last frame (only those) */
     {
         uint8_t *end = op8;
         for (p = op8; p < oam_last; p += 4) *p = 0;
         oam_last = end;
     }
+    dbg_spr2[3] = LY_REG;
 }
 
 /* ------------------------------------------------------------------ HUD */
@@ -417,7 +525,7 @@ void hud_draw_all(void) BANKED
     print_win(14, 1, "S");
     hud_coins = hud_lives = hud_sector_v = 0xFF;
     hud_time = 0xFFFF;
-    hud_score_v = 0xFFFFFFFFUL;
+    hud_score_rev = (uint8_t)(W.score_rev - 1);
 }
 
 void hud_pause(uint8_t on) BANKED
@@ -434,7 +542,7 @@ void hud_pause(uint8_t on) BANKED
         print_win(5, 1, t);
     } else {
         print_win(0, 0, "PETER   ");
-        hud_score_v = 0xFFFFFFFFUL;
+        hud_score_rev = (uint8_t)(W.score_rev - 1);
     }
 }
 
@@ -444,29 +552,19 @@ static uint8_t hud_turn;
 static void hud_update(void)
 {
     char t[8];
+    {
+        extern uint8_t dbg_hud_case;
+        dbg_hud_case = (uint8_t)(hud_turn + 1) & 3;
+    }
     switch (++hud_turn & 3) {
     case 0:
-    if (W.score != hud_score_v) {
-        /* score: decimal digits kept incrementally (32-bit division is slow on the GB) */
-        uint32_t d = W.score - hud_score_v;
-        uint8_t i;
-        if (hud_score_v == 0xFFFFFFFFUL || W.score < hud_score_v || d > 60000UL) {
-            fmt_u32(t, W.score, 7);
-            for (i = 0; i < 7; i++) hud_score[i] = (uint8_t)(t[i] - '0');
-        } else {
-            uint8_t dd[5], carry = 0;
-            digits16(dd, (uint16_t)d);
-            for (i = 7; i--;) {
-                uint8_t v = (uint8_t)(hud_score[i] + carry + (i >= 2 ? dd[i - 2] : 0));
-                carry = v >= 10;
-                hud_score[i] = (uint8_t)(carry ? v - 10 : v);
-            }
+        if (W.score_rev != hud_score_rev) {     /* the sim keeps the score's digits */
+            uint8_t i;
+            hud_score_rev = W.score_rev;
+            for (i = 0; i < 7; i++) t[i] = (char)('0' + W.sdig[i]);
+            t[7] = 0;
+            hud_print(0, 1, t);
         }
-        hud_score_v = W.score;
-        for (i = 0; i < 7; i++) t[i] = (char)('0' + hud_score[i]);
-        t[7] = 0;
-        hud_print(0, 1, t);
-    }
         break;
     case 1:
         if (W.coins != hud_coins) { hud_coins = W.coins; fmt_u16(t, hud_coins, 2); hud_print(11, 0, t); }
@@ -521,6 +619,7 @@ void render_frame(void) BANKED
     draw_sprites();
     dbg_ly[3] = LY_REG;
     hud_update();
+    dbg_ly[7] = LY_REG;
     sounds();
     dbg_ly[4] = LY_REG;
     /* the tile animation: the capsule's 4 tiles on one frame, the star bit's on another */

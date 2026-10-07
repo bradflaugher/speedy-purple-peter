@@ -1,16 +1,17 @@
 /* sound.c - SPEEDY PURPLE PETER sound engine: a small 4-channel song player + sfx scripts.
  *
- * Bank 0, data const, 100 bytes of RAM.  snd_tick() runs once per frame from VBlank; every
+ * Bank 0, data const, 135 bytes of RAM.  snd_tick() runs once per frame from VBlank; every
  * other call only posts a request (the game loop and the ISR share nothing else).  Host
  * build: -DHOST_TEST sends register writes to host_snd_write() (tests/test_sound.c is a
  * fake APU that checks them).
  *
  * Songs (sound_data.h): one byte stream per channel with pattern calls, transpose and
  * inline instruments.  Tempo is an 8-bit accumulator (a row on each carry), so hurry is
- * just a bigger rate (1.5x).  Between rows a frame costs a few compares.
+ * just a bigger rate (1.5x).  Between rows a frame costs a few compares and the effects.
  *
- *   CH1  harmony / sparkle (the sfx channel: skipped while an sfx owns it)
- *   CH2  lead
+ *   CH1  chords as a fast arpeggio (root, third, fifth: a frame each), or an echo of the
+ *        lead (the sfx channel: skipped while an sfx owns it)
+ *   CH2  lead: slides up into notes (SL) and a delayed vibrato on held notes
  *   CH3  bass: triggered once and never retriggered (a retrigger while playing corrupts wave
  *        RAM on the DMG); notes only change the frequency, and the level follows a small
  *        software envelope (NR32, one step per frame).  A new wave is loaded only after the
@@ -30,8 +31,11 @@
  * Speed (SDCC on the SM83 is slow with arrays and stack locals): the per-channel code is
  * written out once per channel with fixed-address state (the CH_* / S_* macros); each
  * channel's next event is parsed ahead on the frames between rows, so a row only writes
- * registers; a song start takes a frame of its own; new sfx wait out a row frame.  Measured
- * in PyBoy (tools/render_audio.py): ~100 M-cycles idle, ~250 average with music, ~800 worst.
+ * registers; the effects take a new note's values on the frame after its row and the lead's
+ * wait for their next step on a countdown; a song start takes a frame of its own; new sfx
+ * wait out a row frame (and a frame that parsed two channels).  Measured in PyBoy
+ * (tools/render_audio.py --bench, the game's compiler flags): ~75 M-cycles idle, ~300
+ * average with music (the arpeggio and vibrato cost ~50 a frame), ~900 worst.
  */
 #include <stdint.h>
 #include "sound.h"
@@ -45,19 +49,17 @@
 /* ------------------------------------------------------------------ state */
 /* requests (game loop -> snd_tick) */
 static volatile uint8_t rq_song = RQ_NONE, rq_hurry = RQ_NONE;
+static volatile uint8_t rq;               /* 1: a song or hurry request is waiting */
 static volatile uint8_t sq[4];
 static volatile uint8_t sq_head, sq_tail;
-static uint8_t sq_waited;                 /* the queue head waited out a busy frame */
 
 /* song player */
 static uint8_t song, hurry, rate, acc, live, delay;
-static uint8_t busy;                      /* this frame's music work: 0, 1 (parsed two), 2 (row) */
+static uint8_t busy;                      /* this frame's music work: 0, 1 (parsed one), 2 (row, or parsed two) */
 static uint8_t need;                      /* channels whose next event is still to be parsed */
 
-/* Per channel: the stream position, and the next event, parsed ahead of time (see row()). */
-#define EV_NOTE 0
-#define EV_REST 1
-#define EV_END  2
+/* Per channel: the stream position, and the next event, parsed ahead of time (see row()):
+   c<N>_ev is the event's stream byte (a note < SB_NOTES, SB_REST or SB_END). */
 #define CH_STATE(N) \
     static const uint8_t *c##N##_ptr, *c##N##_ret, *c##N##_loop; \
     static uint8_t c##N##_wait, c##N##_len, c##N##_tr, c##N##_ev, c##N##_plen
@@ -69,9 +71,23 @@ static uint16_t c0_px, c1_px, c2_px;      /* the next note's frequency register 
 static const uint8_t *c3_pd;              /* the next drum */
 static uint8_t c0_duty, c0_env, c1_duty, c1_env;
 
+/* CH1 arpeggio ("chords"): with ARP xy, a note plays root, +x, +y semitones, a frame each */
+static uint8_t c0_arp, c0_parp, c0_aon, c0_ap;
+static uint16_t c0_pa, c0_pb, c0_x0, c0_x1, c0_x2;
+/* CH2 lead: SL scoops up into the next note; the instrument's delayed vibrato.  The p*
+   values are parsed ahead for the next note, the others belong to the note playing. */
+static uint8_t c1_slf, c1_psl, c1_pfx, c1_pdel;   /* slide flag, slide depth, effects (bit 0 slide,
+                                                     1 vibrato), vibrato delay */
+static uint16_t c1_pvu, c1_pvd;           /* vibrato: the next note's register +- depth */
+static uint8_t c1_vdel;                   /* the instrument's vibrato delay (frames, 0 = none) */
+static uint8_t c1_fx, c1_wake, c1_ph, c1_sl, c1_del;   /* effects (0x80: take the note's values),
+                                     frames to the next step, vibrato phase, slide, delay */
+static uint16_t c1_cx, c1_vu, c1_vd;
+
 /* bass */
 static uint8_t b_lvl, b_tgt, b_hold, b_peak, b_phold, b_sus;
 static uint8_t w_on, w_cur, w_want;
+static uint8_t b_work;                    /* the bass level / wave has something to do */
 static uint16_t b_x;
 
 /* sfx */
@@ -98,13 +114,16 @@ void sfx_play(uint8_t id)
 
 void music_play(uint8_t s)
 {
-    if (s < NUM_MUS)
+    if (s < NUM_MUS) {
         rq_song = s;
+        rq = 1;
+    }
 }
 
 void music_hurry(uint8_t on)
 {
     rq_hurry = on ? 1 : 0;
+    rq = 1;
 }
 
 uint8_t music_done(void)
@@ -120,66 +139,137 @@ uint8_t snd_debug_hurry(void) { return hurry; }
 
 /* ------------------------------------------------------------------ parsing */
 #define INS0(p) do { c0_duty = (p)[0]; c0_env = (p)[1]; } while (0)
-#define INS1(p) do { c1_duty = (p)[0]; c1_env = (p)[1]; } while (0)
+#define INS1(p) do { c1_duty = (p)[0]; c1_env = (p)[1]; c1_vdel = (p)[2]; } while (0)
 #define INS2(p) do { b_peak = (p)[0]; b_phold = (p)[1]; b_sus = (p)[2]; } while (0)
 #define INS3(p) ((void)0)
+#define SLIDE0() ((void)0)                /* (an echo of the lead on CH1 plays it plain) */
+#define SLIDE1() (c1_slf = 1)
+#define SLIDE2() ((void)0)
+#define SLIDE3() ((void)0)
+#define ARP0(v) (c0_arp = (v))
+#define ARP1(v) ((void)0)
+#define ARP2(v) ((void)0)
+#define ARP3(v) ((void)0)
 
-#define PREP0(b) c0_px = snd_freq[(uint8_t)((b) + c0_tr)]
-#define PREP1(b) c1_px = snd_freq[(uint8_t)((b) + c1_tr)]
-#define PREP2(b) c2_px = snd_freq[(uint8_t)((b) + c2_tr + 12)]   /* CH3: an octave down */
-#define PREP3(b) c3_pd = snd_drum[b]
+/* the next note's frequency (and its effects), ready for row() */
+static void prep0(uint8_t n)
+{
+    uint8_t a = c0_arp;
+    n += c0_tr;
+    c0_px = snd_freq[n];
+    c0_parp = a;
+    if (a) {
+        c0_pa = snd_freq[(uint8_t)(n + (a >> 4))];
+        c0_pb = snd_freq[(uint8_t)(n + (a & 15))];
+    }
+}
+
+static void prep1(uint8_t n)
+{
+    uint16_t x;
+    uint8_t d, f = 0;
+    n += c1_tr;
+    c1_px = x = snd_freq[n];
+    c1_psl = 0;
+    if (c1_slf) {
+        c1_psl = snd_sld[n];              /* slide: from about a tone below */
+        c1_slf = 0;
+        f = 1;
+    }
+    d = snd_vib[n];                       /* vibrato: about +-1/3 semitone, on notes of a */
+    if (d && c1_vdel && c1_len >= 4) {    /* quarter note or longer */
+        c1_pdel = c1_vdel;
+        c1_pvu = x + d;
+        c1_pvd = x - d;
+        f |= 2;
+    }
+    c1_pfx = f;
+}
+
+static void prep2(uint8_t n)
+{
+    c2_px = snd_freq[(uint8_t)(n + c2_tr + 12)];   /* CH3: an octave down */
+}
+
+static void prep3(uint8_t n)
+{
+    c3_pd = snd_drum[n];
+}
+
+/* (functions, so the parsers below keep the event byte in a register) */
+#define PREP0(b) prep0(b)
+#define PREP1(b) prep1(b)
+#define PREP2(b) prep2(b)
+#define PREP3(b) prep3(b)
 
 /* Read channel N's stream up to its next note / rest / end and keep it ready for row().
-   One copy per channel: fixed addresses are much cheaper than indexing on the SM83. */
+   One copy per channel: fixed addresses are much cheaper than indexing on the SM83.  The
+   common bytes stay in the loop (where SDCC keeps the position in a register); the rare
+   ones (TR, INS, LOOP) go to a helper that moves the position through cp. */
+static const uint8_t *cp;                 /* the stream position, for the ch<N>_cmd() helpers */
+
 #define CH_PARSE(N, INSLEN) \
+static void ch##N##_cmd(uint8_t b) \
+{ \
+    if (b == SB_TR) { \
+        c##N##_tr = *cp++; \
+    } else if (b == SB_INS) { \
+        INS##N(cp); \
+        cp += INSLEN; \
+    } else { /* SB_LOOP */ \
+        cp = c##N##_loop; \
+    } \
+} \
 static void ch##N##_parse(void) \
 { \
     const uint8_t *p = c##N##_ptr; \
     uint8_t b; \
     for (;;) { \
         b = *p++; \
-        if (b < SB_NOTES) { \
-            c##N##_ev = EV_NOTE; \
-            PREP##N(b); \
+        if (b <= SB_END) /* a note, or the end */ \
             break; \
-        } \
         if (b >= SB_LEN) { \
             c##N##_len = (uint8_t)(b - (SB_LEN - 1)); \
             continue; \
         } \
-        switch (b) { /* 0x80..0x86: a jump table */ \
-        case SB_END: \
-            c##N##_ev = EV_END; \
-            goto out; \
-        case SB_LOOP: \
-            p = c##N##_loop; \
+        if (b == SB_REST) \
             break; \
-        case SB_CALL: \
-            c##N##_ret = p + 1; \
-            p = snd_pat[*p]; \
-            break; \
-        case SB_RET: \
-            p = c##N##_ret; \
-            break; \
-        case SB_TR: \
-            c##N##_tr = *p++; \
-            break; \
-        case SB_INS: \
-            INS##N(p); \
-            p += INSLEN; \
-            break; \
-        default: /* SB_REST */ \
-            c##N##_ev = EV_REST; \
-            goto out; \
+        if (b == SB_RET) { \
+            p = c##N##_ret + 1; \
+            continue; \
         } \
+        if (b == SB_TCALL) { \
+            c##N##_tr = *p++; \
+            goto call; \
+        } \
+        if (b == SB_CALL) { \
+call: \
+            c##N##_ret = p;               /* (at the pattern number) */ \
+            p = snd_pat[*p]; \
+            continue; \
+        } \
+        if (b == SB_SLIDE) { \
+            SLIDE##N(); \
+            continue; \
+        } \
+        if (b == SB_ARP) { \
+            ARP##N(*p); \
+            p++; \
+            continue; \
+        } \
+        cp = p;                           /* the rare ones: TR, INS, LOOP */ \
+        ch##N##_cmd(b); \
+        p = cp; \
     } \
-out: \
-    c##N##_plen = c##N##_len; \
     c##N##_ptr = p; \
+    c##N##_ev = b; \
+    c##N##_plen = c##N##_len; \
     need &= (uint8_t)~(1 << N); \
+    if (b < SB_NOTES) \
+        PREP##N(b); \
 }
-CH_PARSE(0, 2)
-CH_PARSE(1, 2)
+CH_PARSE(0, 3)
+CH_PARSE(1, 3)
 CH_PARSE(2, 3)
 CH_PARSE(3, 0)
 
@@ -220,6 +310,7 @@ static void song_start(uint8_t s)
     c0_wait = c1_wait = c2_wait = c3_wait = 1;
     c0_len = c1_len = c2_len = c3_len = 1;
     c0_tr = c1_tr = c2_tr = c3_tr = 0;
+    c0_arp = c1_slf = c0_aon = c1_fx = 0;
     f = 0;
     if (c0_ptr)
         f = 1;
@@ -232,6 +323,7 @@ static void song_start(uint8_t s)
     live = need = f;
     b_tgt = 0;
     b_hold = 0;
+    b_work = 1;
     f = snd_song_wave[s];
     if (f != WV_KEEP)
         w_want = f;
@@ -239,7 +331,7 @@ static void song_start(uint8_t s)
     delay = 1;
 }
 
-static void rest2(void) { b_tgt = 0; b_hold = 0; }
+static void rest2(void) { b_tgt = 0; b_hold = 0; b_work = 1; }
 
 /* A row only plays events parsed on the frames before (parse_ahead), so it costs about
    four sets of register writes.  If a parse is somehow late, the channel parses now. */
@@ -252,14 +344,16 @@ static void row(void)
             ch0_parse();
         }
         e = c0_ev;
-        if (e == EV_NOTE) {
+        if (e < SB_NOTES) {
             if (!(owned & 1)) {
                 SND_W(SND_NR11, c0_duty);
                 SND_W(SND_NR12, c0_env);
                 SND_W(SND_NR13, (uint8_t)c0_px);
                 SND_W(SND_NR14, (uint8_t)(0x80 | (c0_px >> 8)));
+                c0_aon = c0_parp;         /* (the arpeggio takes its notes next frame) */
+                c0_ap = 3;
             }
-        } else if (e == EV_END) {
+        } else if (e == SB_END) {
             live &= (uint8_t)~1;
             goto ch1;
         }
@@ -273,14 +367,21 @@ ch1:
             ch1_parse();
         }
         e = c1_ev;
-        if (e == EV_NOTE) {
+        if (e < SB_NOTES) {
             if (!(owned & 2)) {
+                uint16_t x = c1_px - c1_psl;   /* (a slide starts below) */
+                uint8_t f = c1_pfx;
+                if (f) {                  /* effects: fx_lead() takes the note's values */
+                    f |= 0x80;            /* next frame */
+                    c1_wake = 1;
+                }
+                c1_fx = f;
                 SND_W(SND_NR21, c1_duty);
                 SND_W(SND_NR22, c1_env);
-                SND_W(SND_NR23, (uint8_t)c1_px);
-                SND_W(SND_NR24, (uint8_t)(0x80 | (c1_px >> 8)));
+                SND_W(SND_NR23, (uint8_t)x);
+                SND_W(SND_NR24, (uint8_t)(0x80 | (x >> 8)));
             }
-        } else if (e == EV_END) {
+        } else if (e == SB_END) {
             live &= (uint8_t)~2;
             goto ch2;
         }
@@ -294,7 +395,7 @@ ch2:
             ch2_parse();
         }
         e = c2_ev;
-        if (e == EV_NOTE) {               /* bass: new pitch, no retrigger */
+        if (e < SB_NOTES) {               /* bass: new pitch, no retrigger */
             b_x = c2_px;
             if (w_on) {
                 SND_W(SND_NR33, (uint8_t)c2_px);
@@ -302,9 +403,10 @@ ch2:
             }
             b_hold = b_phold;
             b_tgt = b_phold ? b_peak : b_sus;
+            b_work = 1;
         } else {
             rest2();
-            if (e == EV_END) {
+            if (e == SB_END) {
                 live &= (uint8_t)~4;
                 goto ch3;
             }
@@ -319,7 +421,7 @@ ch3:
             ch3_parse();
         }
         e = c3_ev;
-        if (e == EV_NOTE) {               /* drum */
+        if (e < SB_NOTES) {               /* drum */
             if (!(owned & 8)) {
                 const uint8_t *d = c3_pd;
                 SND_W(SND_NR41, d[0]);
@@ -327,7 +429,7 @@ ch3:
                 SND_W(SND_NR43, d[2]);
                 SND_W(SND_NR44, d[3]);
             }
-        } else if (e == EV_END) {
+        } else if (e == SB_END) {
             live &= (uint8_t)~8;
             goto done;
         }
@@ -337,10 +439,12 @@ ch3:
 done:
     if (!live) {                          /* a jingle ended */
         l = snd_song_next[song];
-        if (l != MUS_NONE)
+        if (l != MUS_NONE) {
             song_start(l);
-        else
+        } else {
             song = MUS_NONE;
+            c1_fx = c0_aon = 0;           /* (the last notes ring out plain) */
+        }
     }
 }
 
@@ -358,32 +462,88 @@ static void parse_one(void)
 }
 
 /* Parse the channels that played on the last row, spread over the frames before the next
-   one (rows are >= 3 frames apart): ceil(waiting / frames left), so at most two a frame. */
+   one (rows are >= 3 frames apart): one a frame; two when only two frames are left and two
+   or more wait; the rest on the last frame (so at most two a frame).  While a new sfx waits
+   to start, what can wait for a later frame does, so the sfx gets a light frame.
+   busy: 1 = parsed one, 2 = parsed two (no new sfx on this frame). */
 static void parse_ahead(uint8_t a)
 {
-    static const uint8_t bits[16] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4 };
-    uint8_t n = bits[need], r = rate, t;
-    parse_one();
-    if (n == 1)
-        return;
-    t = (uint8_t)(a + r);
-    if (t < a) {                          /* the next frame is a row: finish now */
-        while (need)
-            parse_one();
+    uint8_t r = rate;
+    a += r;
+    if (a < r) {                          /* the next frame is a row: finish now */
+        parse_one();
         busy = 1;
-        return;
-    }
-    if ((uint8_t)(t + r) < t) {           /* one more frame: half now (rounded up) */
-        if (n >= 3) {
-            parse_one();
-            busy = 1;
+        if (need) {
+            do
+                parse_one();
+            while (need);
+            busy = 2;
         }
         return;
     }
-    if (n == 4 && (uint8_t)(t + r + r) < (uint8_t)(t + r)) {
-        parse_one();                      /* two more frames: two now, one, one */
+    if ((uint8_t)(a + r) < r) {           /* one more frame after this one */
+        a = need;
+        if (sq_tail != sq_head && !(a & (uint8_t)(a - 1)))
+            return;                       /* an sfx waits: one can wait for the next frame */
+        parse_one();
+        busy = 1;
+        a = need;
+        if (a & (uint8_t)(a - 1)) {       /* two or more still waiting */
+            parse_one();
+            busy = 2;
+        }
+        return;
+    }
+    if (sq_tail == sq_head) {             /* more frames left: one now (none if an sfx waits) */
+        parse_one();
         busy = 1;
     }
+}
+
+/* ------------------------------------------------------------------ pitch effects */
+/* Only a frequency is rewritten (NRx3 / NRx4 without a trigger), from values prepared ahead.
+   The lead, every second frame: its slide (the gap halves each time), then, after the
+   instrument's delay, its vibrato (+d, 0, -d, 0: 7.5 Hz); c1_wake counts the frames to the
+   next step, so a note waiting for its vibrato costs a decrement a frame.  CH1's arpeggio: one chord note
+   a frame. */
+static void fx_lead(void)
+{
+    uint16_t x;
+    uint8_t t;
+    if (c1_fx & 0x80) {                   /* a new note (the frame after its row, before
+                                             anything is parsed): take its values */
+        c1_fx &= 3;
+        c1_cx = c1_px;
+        c1_vu = c1_pvu;
+        c1_vd = c1_pvd;
+        c1_del = t = c1_pdel;
+        c1_ph = 0;
+        c1_sl = c1_psl;
+        if (!c1_psl) {
+            c1_wake = t;                  /* the vibrato's delay */
+            return;
+        }
+    }
+    t = c1_sl;
+    c1_wake = 2;                          /* a step every two frames */
+    if (t) {
+        t >>= 1;
+        c1_sl = t;
+        x = c1_cx - t;
+        if (!t) {                         /* slide done: vibrato (after its delay) or nothing */
+            c1_wake = c1_del;
+            c1_fx &= 2;
+        }
+    } else {
+        t = (uint8_t)(++c1_ph & 3);
+        x = c1_cx;
+        if (t == 1)
+            x = c1_vu;
+        else if (t == 3)
+            x = c1_vd;
+    }
+    SND_W(SND_NR23, (uint8_t)x);
+    SND_W(SND_NR24, (uint8_t)(x >> 8));
 }
 
 /* ------------------------------------------------------------------ bass level + wave */
@@ -428,18 +588,36 @@ static void wave_frame(void)
     b_lvl = 0;
 }
 
-/* the bass level: one NR32 step a frame towards b_tgt */
-static void level_step(void)
+/* the bass's frame: a wave change; the level, one NR32 step a frame towards b_tgt; then the
+   pluck (b_hold frames at the peak, then the sustain level).  b_work goes off once there is
+   nothing left to do. */
+static void bass_frame(void)
 {
-    if (b_lvl < b_tgt)
-        b_lvl++;
-    else
-        b_lvl--;
-    SND_W(SND_NR32, nr32_lvl[b_lvl]);
+    uint8_t l;
+    if (w_want != w_cur) {
+        wave_frame();
+        return;
+    }
+    l = b_lvl;
+    if (l != b_tgt) {
+        if (l < b_tgt)
+            l++;
+        else
+            l--;
+        b_lvl = l;
+        SND_W(SND_NR32, nr32_lvl[l]);
+        return;
+    }
+    if (b_hold) {
+        if (!--b_hold)
+            b_tgt = b_sus;
+        return;
+    }
+    b_work = 0;
 }
 
 /* ------------------------------------------------------------------ sfx */
-static uint8_t t_id, t_pr, t_m;           /* sfx_start() arguments / temporaries */
+static uint8_t t_id, t_pr, t_m;           /* sfx_start() argument / temporaries */
 
 static void sfx_start(void)
 {
@@ -454,11 +632,13 @@ static void sfx_start(void)
             return;
     }
     if (t_m & 1) {
+        c0_aon = 0;                       /* no pitch effects on a borrowed channel */
         s0_ptr = snd_sfx_s0[t_id];
         s0_wait = 0;
         s0_prio = t_pr;
     }
     if (t_m & 2) {
+        c1_fx = 0;
         s1_ptr = snd_sfx_s1[t_id];
         s1_wait = 0;
         s1_prio = t_pr;
@@ -514,14 +694,16 @@ void snd_init(void)
     SND_W(SND_NR32, 0x00);
     SND_W(SND_NR30, 0x80);
     rq_song = rq_hurry = RQ_NONE;
-    sq_head = sq_tail = sq_waited = 0;
+    rq = 0;
+    sq_head = sq_tail = 0;
     song = MUS_NONE;
     hurry = live = need = acc = rate = delay = 0;
     s0_ptr = s1_ptr = s2_ptr = 0;
     owned = 0;
-    b_lvl = b_tgt = b_hold = b_peak = b_phold = b_sus = 0;
+    b_lvl = b_tgt = b_hold = b_peak = b_phold = b_sus = b_work = 0;
     c0_duty = c1_duty = 0x80;
     c0_env = c1_env = 0x11;
+    c0_arp = c0_aon = c1_fx = c1_slf = c1_vdel = 0;
     b_x = snd_freq[12];                   /* (CH3 is triggered before the first bass note) */
     w_on = 0;                             /* CH3 is stopped after power-on */
     w_cur = w_want = WV_KEEP;
@@ -532,58 +714,81 @@ void snd_tick(void)
     uint8_t a;
 
     /* requests */
-    a = rq_hurry;
-    if (a != RQ_NONE) {
-        rq_hurry = RQ_NONE;
-        hurry = a;
-        set_rate();
+    if (rq) {
+        rq = 0;
+        a = rq_hurry;
+        if (a != RQ_NONE) {
+            rq_hurry = RQ_NONE;
+            hurry = a;
+            set_rate();
+        }
+        a = rq_song;
+        if (a != RQ_NONE) {
+            rq_song = RQ_NONE;
+            song_start(a);
+            busy = 1;
+            goto sfx;                     /* a frame of its own */
+        }
     }
-    a = rq_song;
-    if (a != RQ_NONE) {
-        rq_song = RQ_NONE;
-        song_start(a);
-        busy = 1;
-        goto sfx;                         /* a frame of its own */
+
+    /* pitch effects first: a note's effect values are taken the frame after its row,
+       before the parse-ahead below replaces them with the next note's */
+    if (c1_fx && !--c1_wake)
+        fx_lead();
+    if (c0_aon) {                         /* CH1's arpeggio: the next chord note */
+        uint16_t x;
+        a = c0_ap;
+        if (a == 0) {
+            c0_ap = 1;
+            x = c0_x1;
+        } else if (a == 1) {
+            c0_ap = 2;
+            x = c0_x2;
+        } else if (a == 2) {
+            c0_ap = 0;
+            x = c0_x0;
+        } else {                          /* a new note (its root just played): take its chord */
+            c0_x0 = c0_px;
+            c0_x2 = c0_pb;
+            c0_ap = 1;
+            x = c0_x1 = c0_pa;
+        }
+        SND_W(SND_NR13, (uint8_t)x);
+        SND_W(SND_NR14, (uint8_t)(x >> 8));
     }
 
     /* song: a row on each carry of the tempo accumulator; parse ahead in between */
     busy = 0;
-    if (delay) {                          /* a new song: parse its first events, one a */
-        if (need) {                       /* frame (not while a wave loads) */
-            if (w_want == w_cur)
-                parse_one();
+    if (live) {
+        if (delay) {                      /* a new song: parse its first events, one a */
+            if (need) {                   /* frame (not while a wave loads) */
+                if (w_want == w_cur)
+                    parse_one();
+            } else {
+                delay = 0;
+                acc = (uint8_t)(0u - rate);   /* the first row on the next frame */
+            }
         } else {
-            delay = 0;
-            acc = (uint8_t)(0u - rate);   /* the first row on the next frame */
-        }
-    } else if (live) {
-        a = (uint8_t)(acc + rate);
-        if (a < acc) {
+            a = (uint8_t)(acc + rate);
             acc = a;
-            row();
-            busy = 2;
-        } else {
-            acc = a;
-            if (need)
+            if (a < rate) {               /* (carry) */
+                row();
+                busy = 2;
+            } else if (need) {
                 parse_ahead(a);
+            }
         }
     }
-    if (b_hold && !--b_hold)
-        b_tgt = b_sus;                    /* the pluck: peak, then sustain */
-    if (w_want != w_cur)
-        wave_frame();
-    else if (b_lvl != b_tgt)
-        level_step();
+    if (b_work)
+        bass_frame();
 
 sfx:
-    /* new sfx: up to two a frame; one on a frame that parsed two channels; none on a row
-       frame, unless they already waited a frame (a frame later is inaudible, and it keeps
-       the worst frames cheap) */
+    /* new sfx: up to two a frame; one on a frame that parsed a channel; none on a row frame
+       or one that parsed more (the frame after a row is never a row, and parses make room
+       for a waiting sfx, so it waits a frame, rarely two: inaudible, and it keeps the worst
+       frames cheap) */
     if (sq_tail != sq_head) {
-        if (busy == 2 && !sq_waited) {
-            sq_waited = 1;
-        } else {
-            sq_waited = 0;
+        if (busy != 2) {
             a = sq_tail;
             t_id = sq[a];
             sfx_start();

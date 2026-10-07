@@ -149,10 +149,37 @@ HELPER Fx *fx_new(uint8_t kind)
     return &w->fx[i];
 }
 
+/* The score is kept twice: as a number, and as 7 decimal digits for the HUD (the Game Boy has
+   no divide, and turning a 32-bit number into digits every frame is far too slow). */
 HELPER void add_score(uint16_t pts)
 {
+    uint8_t add[7], i, carry;
+    /* the cap is 9,999,999: only look closer once the top digit is a 9 */
+    if (w->sdig[0] == 9 && w->score + pts > 9999999UL) {
+        w->score = 9999999UL;
+        for (i = 0; i < 7; i++) w->sdig[i] = 9;
+        w->score_rev++;
+        return;
+    }
     w->score += pts;
-    if (w->score > 9999999UL) w->score = 9999999UL;
+    /* pts (< 10000) to digits by subtraction, then a decimal add from the lowest digit that
+       changes, stopping as soon as nothing is carried */
+    add[0] = add[1] = add[2] = add[3] = add[4] = add[5] = 0;
+    while (pts >= 1000) { pts -= 1000; add[3]++; }
+    while (pts >= 100) { pts -= 100; add[4]++; }
+    while (pts >= 10) { pts -= 10; add[5]++; }
+    add[6] = (uint8_t)pts;
+    i = 6;
+    while (i > 3 && !add[i]) i--;
+    carry = 0;
+    for (;;) {
+        uint8_t v = (uint8_t)(w->sdig[i] + carry + add[i]);
+        carry = (uint8_t)(v >= 10);
+        w->sdig[i] = (uint8_t)(carry ? v - 10 : v);
+        if (!i || (i <= 3 && !carry)) break;
+        i--;
+    }
+    w->score_rev++;
 }
 
 HELPER void one_up(void)
@@ -173,18 +200,22 @@ HELPER void award(uint8_t step, uint16_t x, int16_t y)
     if (f) { f->x = x; f->y = y; f->v = step; f->t = 40; }
 }
 
+HELPER void count_coin(void)
+{
+    w->sfx |= EV_COIN;
+    if (++w->coins >= 100) { w->coins = 0; one_up(); }
+}
+
 HELPER void get_coin(void)
 {
     add_score(200);
-    w->sfx |= EV_COIN;
-    if (++w->coins >= 100) { w->coins = 0; one_up(); }
+    count_coin();
 }
 
 HELPER void coin_pop(uint16_t col, uint8_t row)
 {
     Fx *f = fx_new(FX_COIN);
-    get_coin();
-    w->score -= 200;                    /* the pop-up awards it when it lands */
+    count_coin();                       /* the pop-up awards the 200 when it lands */
     if (f) { f->x = (uint16_t)(col * 16 + 4); f->y = (int16_t)(row * 16 - 16); f->vy = -6; f->t = 0; }
     else add_score(200);
 }

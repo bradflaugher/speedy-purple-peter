@@ -46,6 +46,7 @@ typedef struct {
     uint8_t a, b, c, d;     /* segment parameters */
     uint8_t segs_left;      /* body segments still to come in this sector */
     uint8_t col;            /* column number within the sector (wraps; decor only) */
+    uint8_t m48, m96;       /* the column number mod 48 and 96 (the decor's patterns) */
     uint8_t diff;           /* difficulty 0..15 */
     uint8_t power_left;     /* power-ups still owed to this sector */
     uint8_t gap_next;       /* 1: put a short flat stretch before the next segment */
@@ -59,6 +60,9 @@ typedef struct {
 void gen_begin(Gen *g, uint16_t seed, uint16_t sector) GEN_BANKED;
 /* Writes the next column's 13 cells (top to bottom) and its spawn byte. */
 uint8_t gen_column(Gen *g, uint8_t *cells, uint8_t *spawn) GEN_BANKED;
+/* Rolls the next segment if the current one is used up (gen_column does it too when needed):
+   lets the caller do the slow part on a frame of its choosing. Changes nothing else. */
+void gen_prepare(Gen *g) GEN_BANKED;
 
 /* longest pit (in columns) the generator makes at difficulty d */
 uint8_t gen_max_pit(uint8_t d) GEN_BANKED;

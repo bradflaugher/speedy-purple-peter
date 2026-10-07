@@ -10,22 +10,60 @@
 #endif
 #include "level.h"
 
+#if defined(__SDCC)
+extern uint8_t dbg_gen_ly[4];
+#define GPROF(i) (dbg_gen_ly[i] = *(volatile uint8_t *)0xFF44)
+#else
+#define GPROF(i) ((void)0)
+#endif
+
 #define SKY T_SKY
 
+/* xorshift16 (7, 9, 8), written byte by byte: the Game Boy shifts one bit at a time */
 static uint8_t rnd(Gen *g)
 {
-    uint16_t x = g->rng;
-    x ^= (uint16_t)(x << 7);
-    x ^= (uint16_t)(x >> 9);
-    x ^= (uint16_t)(x << 8);
-    g->rng = x;
-    return (uint8_t)(x ^ (x >> 8));
+    uint8_t lo = (uint8_t)g->rng, hi = (uint8_t)(g->rng >> 8);
+    hi ^= (uint8_t)((hi << 7) | (lo >> 1));     /* x ^= x << 7 */
+    lo ^= (uint8_t)(lo << 7);
+    lo ^= (uint8_t)(hi >> 1);                   /* x ^= x >> 9 */
+    hi ^= lo;                                   /* x ^= x << 8 */
+    g->rng = (uint16_t)((uint16_t)hi << 8 | lo);
+    return (uint8_t)(lo ^ hi);
 }
 
 /* 0..n-1 */
+/* (a * b) >> 8: the Game Boy has no multiply instruction, and SDCC's 16-bit one is slow, so on
+   the Game Boy it is 8 shift-and-adds in assembly (a in A, b in E, the result in A) */
+#if defined(__SDCC) && defined(__PORT_sm83)
+static uint8_t mulhi8(uint8_t a, uint8_t b) __naked
+{
+    (void)a; (void)b;
+    __asm
+        ld  d, #0
+        ld  hl, #0
+        ld  b, #8
+    1$:
+        add hl, hl
+        rla
+        jr  nc, 2$
+        add hl, de
+    2$:
+        dec b
+        jr  nz, 1$
+        ld  a, h
+        ret
+    __endasm;
+}
+#else
+static uint8_t mulhi8(uint8_t a, uint8_t b)
+{
+    return (uint8_t)(((uint16_t)a * b) >> 8);
+}
+#endif
+
 static uint8_t rr(Gen *g, uint8_t n)
 {
-    return (uint8_t)(((uint16_t)rnd(g) * n) >> 8);
+    return mulhi8(rnd(g), n);
 }
 
 /* lo..hi inclusive */
@@ -76,8 +114,8 @@ static void start_seg(Gen *g, uint8_t seg)
             g->c = (uint8_t)(g->a == SP_GLOOP && chance(g, 30 + d * 4));
         }
         break;
-    case SEG_PIT:
-        g->len = rrange(g, 2, gen_max_pit(d));
+    case SEG_PIT:                /* (a pit wider than 3 needs a 3-column run-up) */
+        g->len = rrange(g, 2, (uint8_t)(g->run_before < 3 && gen_max_pit(d) > 3 ? 3 : gen_max_pit(d)));
         break;
     case SEG_QROW:              /* a: variant, b: power column, c: upper capsule, d: enemy */
         g->a = rr(g, 5);
@@ -112,10 +150,12 @@ static void start_seg(Gen *g, uint8_t seg)
         break;
     case SEG_BRIDGE:            /* a wide pit with a floating platform in the middle (3 clear
                                    columns on each side, so you jump onto it, never into its
-                                   underside); a: platform row */
-        g->len = rrange(g, 8, 10);
-        g->a = rrange(g, 7, 8);
-        g->b = (uint8_t)(chance(g, 40));                      /* gloop on it */
+                                   underside), 3 rows up; b: a gloop on it; c: extra ground
+                                   columns first, so there is always a 3-column run-up */
+        g->c = (uint8_t)(g->run_before < 3 ? 3 - g->run_before : 0);
+        g->len = (uint8_t)(rrange(g, 8, 10) + g->c);
+        g->a = 8;
+        g->b = (uint8_t)(chance(g, 40));
         break;
     case SEG_COINS:             /* a: shape (0 row, 1 arc over a pit) */
         g->a = (uint8_t)(d >= 1 && chance(g, 50));
@@ -193,6 +233,8 @@ void gen_begin(Gen *g, uint16_t seed, uint16_t sector) GEN_BANKED
     g->segs_left = (uint8_t)(12 + (g->diff > 8 ? 8 : g->diff));
     g->power_left = (uint8_t)(g->diff < 4 ? 2 : 1);
     g->col = 0;
+    g->m48 = 0;
+    g->m96 = 0;
     g->gap_next = 0;
     g->seg = SEG_END;
     g->len = 0;
@@ -207,54 +249,73 @@ static void stack(uint8_t *c, uint8_t h)       /* hull blocks h high on the grou
     for (r = 0; r < h; r++) c[GROUND_ROW - 1 - r] = T_SOLID;
 }
 
+/* the background decoration repeats every 48 columns: for each column, the hill / bush cells of
+   rows 8-10 (only on solid ground) and one nebula-cloud cell (row, tile) */
+#define S_ SKY
+static const uint8_t deco_ground[48][3] = {
+    { S_, S_, T_HILL_L }, { S_, T_HILL_L, T_HILL_FILL }, { T_HILL_TOP, T_HILL_FILL, T_HILL_CRATER },
+    { S_, T_HILL_R, T_HILL_FILL }, { S_, S_, T_HILL_R },
+    { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ },
+    { S_, S_, T_BUSH_L }, { S_, S_, T_BUSH_M }, { S_, S_, T_BUSH_R },
+    { S_, S_, S_ }, { S_, S_, S_ },
+    { S_, S_, T_HILL_L }, { S_, T_HILL_TOP, T_HILL_CRATER }, { S_, S_, T_HILL_R },
+    { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ },
+    { S_, S_, T_BUSH_L }, { S_, S_, T_BUSH_M }, { S_, S_, T_BUSH_M }, { S_, S_, T_BUSH_R },
+    { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ },
+    { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ },
+    { S_, S_, S_ }, { S_, S_, S_ },
+    { S_, S_, T_BUSH_L }, { S_, S_, T_BUSH_M }, { S_, S_, T_BUSH_R },
+    { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }, { S_, S_, S_ }
+};
+static const uint8_t deco_cloud[48][2] = {         /* row (0 = none), tile */
+    { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 },
+    { 2, T_CLOUD_L }, { 2, T_CLOUD_M }, { 2, T_CLOUD_R },
+    { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 },
+    { 1, T_CLOUD_L }, { 1, T_CLOUD_M }, { 1, T_CLOUD_M }, { 1, T_CLOUD_R },
+    { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 },
+    { 0, 0 }, { 0, 0 }, { 0, 0 },
+    { 3, T_CLOUD_L }, { 3, T_CLOUD_M }, { 3, T_CLOUD_R },
+    { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }
+};
+#undef S_
+
 static void decor(Gen *g, uint8_t *c)
 {
-    uint8_t m = (uint8_t)(g->col % 48), r;
-    uint8_t ground = c[GROUND_ROW] == T_GROUND_TOP;
-    /* moon hills: big (5 wide, 3 tall) and small (3 wide, 2 tall) */
-    if (ground) {
-        static const uint8_t big[5][3] = {
-            { SKY, SKY, T_HILL_L }, { SKY, T_HILL_L, T_HILL_FILL }, { T_HILL_TOP, T_HILL_FILL, T_HILL_CRATER },
-            { SKY, T_HILL_R, T_HILL_FILL }, { SKY, SKY, T_HILL_R } };
-        static const uint8_t small[3][2] = {
-            { SKY, T_HILL_L }, { T_HILL_TOP, T_HILL_CRATER }, { SKY, T_HILL_R } };
-        if (m < 5) {
-            for (r = 0; r < 3; r++)
-                if (big[m][r] != SKY && c[8 + r] == SKY) c[8 + r] = big[m][r];
-        } else if (m >= 16 && m < 19) {
-            for (r = 0; r < 2; r++)
-                if (small[m - 16][r] != SKY && c[9 + r] == SKY) c[9 + r] = small[m - 16][r];
-        } else if ((m >= 11 && m < 14) || (m >= 23 && m < 27) || (m >= 41 && m < 44)) {
-            uint8_t t = (m == 11 || m == 23 || m == 41) ? T_BUSH_L
-                      : (m == 13 || m == 26 || m == 43) ? T_BUSH_R : T_BUSH_M;
-            if (c[10] == SKY) c[10] = t;
-        }
+    uint8_t m = g->m48, r, k;
+    const uint8_t *d;
+    /* moon hills and crystal bushes stand on the ground */
+    if (c[GROUND_ROW] == T_GROUND_TOP) {
+        d = deco_ground[m];
+        if (d[0] && c[8] == SKY) c[8] = d[0];
+        if (d[1] && c[9] == SKY) c[9] = d[1];
+        if (d[2] && c[10] == SKY) c[10] = d[2];
     }
     /* nebula clouds */
-    if (m >= 8 && m < 11) {
-        if (c[2] == SKY) c[2] = m == 8 ? T_CLOUD_L : m == 10 ? T_CLOUD_R : T_CLOUD_M;
-    } else if (m >= 19 && m < 23) {
-        if (c[1] == SKY) c[1] = m == 19 ? T_CLOUD_L : m == 22 ? T_CLOUD_R : T_CLOUD_M;
-    } else if (m >= 35 && m < 38) {
-        if (c[3] == SKY) c[3] = m == 35 ? T_CLOUD_L : m == 37 ? T_CLOUD_R : T_CLOUD_M;
-    }
+    r = deco_cloud[m][0];
+    if (r && c[r] == SKY) c[r] = deco_cloud[m][1];
     /* a ringed planet now and then */
-    if ((uint8_t)(g->col % 96) == 28 && c[1] == SKY && c[2] == SKY) { c[1] = T_PLANET_TL; c[2] = T_PLANET_BL; }
-    else if ((uint8_t)(g->col % 96) == 29 && c[1] == SKY && c[2] == SKY) { c[1] = T_PLANET_TR; c[2] = T_PLANET_BR; }
-    /* sparse stars (8-bit hash: cheap on the Game Boy) */
-    {
-        uint8_t k = (uint8_t)(g->col * 37u + (uint8_t)g->sector * 11u);
-        for (r = 0; r < 9; r++) {
-            k = (uint8_t)(k * 5u + 0x3Bu);
-            if (c[r] == SKY && (k & 0xF8) == 0x40) c[r] = (k & 1) ? T_STARS_A : T_STARS_B;
-        }
+    if (g->m96 == 28 && c[1] == SKY && c[2] == SKY) { c[1] = T_PLANET_TL; c[2] = T_PLANET_BL; }
+    else if (g->m96 == 29 && c[1] == SKY && c[2] == SKY) { c[1] = T_PLANET_TR; c[2] = T_PLANET_BR; }
+    /* a sparse star (an 8-bit hash of the column: cheap on the Game Boy) */
+    k = (uint8_t)(g->col + (g->col << 2) + (g->col << 5) + (uint8_t)g->sector + ((uint8_t)g->sector << 3));
+    k = (uint8_t)(k ^ (k >> 3) ^ 0x5A);
+    if ((k & 0x30) == 0) {
+        r = (uint8_t)(k & 7);
+        if (c[r] == SKY) c[r] = (k & 0x40) ? T_STARS_A : T_STARS_B;
     }
+}
+
+void gen_prepare(Gen *g) GEN_BANKED
+{
+    while (g->pos >= g->len) next_seg(g);
 }
 
 uint8_t gen_column(Gen *g, uint8_t *c, uint8_t *spawn) GEN_BANKED
 {
     uint8_t r, p, ret = 0, h;
+    GPROF(0);
     while (g->pos >= g->len) next_seg(g);
+    GPROF(1);
     if (g->seg == SEG_START && g->pos == 0) ret |= GEN_SECTOR_START;
     p = g->pos;
     *spawn = 0;
@@ -313,10 +374,12 @@ uint8_t gen_column(Gen *g, uint8_t *c, uint8_t *spawn) GEN_BANKED
         else stack(c, (uint8_t)(g->len - p));
         break;
     case SEG_BRIDGE:
+        if (p < g->c) break;                     /* the run-up */
+        p = (uint8_t)(p - g->c);
         c[GROUND_ROW] = c[GROUND_ROW + 1] = SKY;
-        if (p >= 3 && p < g->len - 3) {
+        if (p >= 3 && p < g->len - g->c - 3) {
             c[g->a] = T_BRICK;
-            if (g->b && p == 4 && g->len >= 10) *spawn = SPAWN(SP_GLOOP, g->a - 1);
+            if (g->b && p == 4 && g->len - g->c >= 10) *spawn = SPAWN(SP_GLOOP, g->a - 1);
         }
         break;
     case SEG_COINS:
@@ -345,8 +408,12 @@ uint8_t gen_column(Gen *g, uint8_t *c, uint8_t *spawn) GEN_BANKED
         }
         break;
     }
+    GPROF(2);
     decor(g, c);
+    GPROF(3);
     g->pos++;
     g->col++;
+    if (++g->m48 == 48) g->m48 = 0;
+    if (++g->m96 == 96) g->m96 = 0;
     return ret;
 }

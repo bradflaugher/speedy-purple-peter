@@ -18,9 +18,9 @@
 @titlekey 1=T_BUSH_L 2=T_BUSH_M 3=T_BUSH_R
 
 @titlescene y=-1
-.a......PQ
-........pq
-b........a
+.a.....b..
+........PQ
+b.......pq
 .h........
 LFR....123
 GGGGGGGGGG
@@ -30,7 +30,7 @@ GGGGGGGGGG
 ..........
 
 # speed streaks, then the three words
-@titleart col=0 row=1 pal=HUD
+@titleart col=0 row=1 pal=SKY
 ................
 ................
 ................
@@ -48,7 +48,7 @@ GGGGGGGGGG
 ................
 ................
 
-@titleart col=2 row=1 pal=HUD
+@titleart col=2 row=1 pal=SKY
 ..############.. ##############.. ################ ################ ############.... ######..######..
 ..#oooooooooo#.. #oooooooooooo#.. #oooooooooooooo# #oooooooooooooo# #oooooooooo#.... #oooo#..#oooo#..
 ###oooooooooo### #oooooooooooo### #oooooooooooooo# #oooooooooooooo# #oooooooooo###.. #oooo#..#oooo#..
@@ -102,7 +102,7 @@ GGGGGGGGGG
 #++++#.......... ..#++++++++++#.. #++++#..#++++++# #++++#.......... #++++++++++++++# #++++++++++++++#
 ######.......... ..############.. ######..######## ######.......... ################ ################
 
-@titleart col=6 row=5 pal=HUD
+@titleart col=6 row=5 pal=SKY
 ................
 ................
 ................
@@ -120,7 +120,7 @@ GGGGGGGGGG
 ................
 ................
 
-@titleart col=8 row=5 pal=HUD
+@titleart col=8 row=5 pal=SKY
 ##############.. ################ ##############.. ################ ##############..
 #oooooooooooo#.. #oooooooooooooo# #oooooooooooo#.. #oooooooooooooo# #oooooooooooo#..
 #oooooooooooo### #oooooooooooooo# #oooooooooooo#.. #oooooooooooooo# #oooooooooooo###

@@ -4,6 +4,20 @@
 #endif
 #include "sim_int.h"
 
+#if defined(__SDCC)
+extern uint8_t dbg_ent_ly[MAX_ENTS];
+static uint8_t ent_ly0;
+uint16_t dbg_fast_hits;
+#define FAST_HIT() (dbg_fast_hits++)
+#define ENT_PROF_A() (ent_ly0 = *(volatile uint8_t *)0xFF44)
+#define ENT_PROF_B(i) (dbg_ent_ly[i] = (uint8_t)(*(volatile uint8_t *)0xFF44 - ent_ly0))
+#else
+uint16_t dbg_fast_hits;
+#define FAST_HIT() (dbg_fast_hits++)
+#define ENT_PROF_A() ((void)0)
+#define ENT_PROF_B(i) ((void)0)
+#endif
+
 void ents_spawn(uint16_t col, uint8_t sp) SIM_BANKED
 {
     uint8_t k = (uint8_t)(sp >> 4), row = (uint8_t)(sp & 15);
@@ -37,58 +51,82 @@ void ents_spawn(uint16_t col, uint8_t sp) SIM_BANKED
     }
 }
 
-/* ------------------------------------------------------------------ the level */
+/* ------------------------------------------------------------------ the entity being updated
+ * cur is the entity being updated (a global, so the helpers below need no parameter). */
+static Ent *cur;
+static Ent *const slots = &W.e[0];  /* (W.e itself is out of reach under the macro below) */
+#define e cur
 
-static uint8_t ent_physics(Ent *e, int16_t grav, int16_t maxfall)
+/* gravity, walls and floors for walkers and items (16x16 box); returns 1 if it hit a wall */
+/* The fields ent_physics works on, loaded into plain globals once and stored back once: SDCC
+   reaches a global directly, while every access through a pointer costs an address calculation. */
+static uint16_t px_;
+static int16_t py_, pvx, pvy;
+static uint8_t pxs, pys, pground;
+
+static uint8_t ent_physics(int16_t grav, int16_t maxfall)
 {
-    SST uint8_t wall;
+    SST uint8_t wall, xl, slow;
+    SST int16_t sum, oldfeet, fy, top;
+    Ent *o = cur;
+    px_ = o->x; py_ = o->y; pvx = o->vx; pvy = o->vy; pxs = o->xs; pys = o->ys; pground = o->ground;
     wall = 0;
-    {
-        SST int16_t sum;
-        sum = (int16_t)((int16_t)e->xs + e->vx);
-        e->x = (uint16_t)(e->x + (sum >> 8));
-        e->xs = (uint8_t)(sum & 0xFF);
-    }
-    if (e->vx > 0 && solid_px((uint16_t)(e->x + 14), (int16_t)(e->y + 8))) {
-        e->x = (uint16_t)(((e->x + 14) & ~15) - 15);
-        wall = 1;
-    } else if (e->vx < 0 && solid_px((uint16_t)(e->x + 1), (int16_t)(e->y + 8))) {
-        e->x = (uint16_t)(((e->x + 1) & ~15) + 15);
-        wall = 1;
-    }
-    if (!e->ground) {
-        e->vy = (int16_t)(e->vy + grav);
-        if (e->vy > maxfall) e->vy = maxfall;
-    }
-    {
-        SST int16_t oldfeet, sum, fy, top;
-        oldfeet = (int16_t)(e->y + 16);
-        sum = (int16_t)((int16_t)e->ys + e->vy);
-        e->y = (int16_t)(e->y + (sum >> 8));
-        e->ys = (uint8_t)(sum & 0xFF);
-        fy = (int16_t)(e->y + 16);
-        top = (int16_t)(fy & ~15);
-        if (e->vy >= 0 && fy >= 0 && oldfeet <= top + 1 &&
-            (solid_px((uint16_t)(e->x + 3), fy) || solid_px((uint16_t)(e->x + 12), fy))) {
-            e->y = (int16_t)(top - 16);
-            e->vy = 0;
-            e->ys = 0;
-            e->ground = 1;
-        } else {
-            e->ground = 0;
+    sum = (int16_t)((int16_t)pxs + pvx);
+    px_ = (uint16_t)(px_ + (sum >> 8));
+    pxs = (uint8_t)sum;
+    /* A slow mover (at most 1 px a frame) steps through every x, so a probe point can only enter a
+       new cell at one value of x & 15: the level is only looked at then (it does not change under a
+       walker, except by a bump, which knocks the walker out anyway). */
+    xl = (uint8_t)((uint8_t)px_ & 15);
+    slow = (uint8_t)(pvx <= 0x100 && pvx >= -0x100);
+    if (pvx > 0) {
+        if ((!slow || xl == 2) && solid_px((uint16_t)(px_ + 14), (int16_t)(py_ + 8))) {
+            px_ = (uint16_t)(((px_ + 14) & ~15) - 15);
+            wall = 1;
+        }
+    } else if (pvx < 0) {
+        if ((!slow || xl == 14) && solid_px((uint16_t)(px_ + 1), (int16_t)(py_ + 8))) {
+            px_ = (uint16_t)(((px_ + 1) & ~15) + 15);
+            wall = 1;
         }
     }
+    if (pground && slow && !wall && xl != 13 && xl != 4) {   /* still on the same cells */
+        o->x = px_; o->xs = pxs;
+        return 0;
+    }
+    if (!pground) {
+        pvy = (int16_t)(pvy + grav);
+        if (pvy > maxfall) pvy = maxfall;
+    }
+    oldfeet = (int16_t)(py_ + 16);
+    sum = (int16_t)((int16_t)pys + pvy);
+    py_ = (int16_t)(py_ + (sum >> 8));
+    pys = (uint8_t)sum;
+    fy = (int16_t)(py_ + 16);
+    top = (int16_t)(fy & ~15);
+    if (pvy >= 0 && fy >= 0 && oldfeet <= top + 1 &&
+        (solid_px((uint16_t)(px_ + 3), fy) || solid_px((uint16_t)(px_ + 12), fy))) {
+        py_ = (int16_t)(top - 16);
+        pvy = 0;
+        pys = 0;
+        pground = 1;
+    } else {
+        pground = 0;
+    }
+    o->x = px_; o->y = py_; o->vy = pvy; o->xs = pxs; o->ys = pys; o->ground = pground;
     return wall;
 }
 
+#undef e
 static void ent_kill_by(Ent *e, uint8_t step, int8_t dir)
 {
     award(step, e->x, e->y);
     ent_flip(e, dir);
     w->sfx |= EV_KICK;
 }
+#define e cur
 
-static void update_ent(Ent *e)
+static void update_ent(void)
 {
     SST int16_t sx;
     sx = (int16_t)(e->x - w->cam_x);
@@ -110,23 +148,30 @@ static void update_ent(Ent *e)
         return;
     }
 
+    /* walkers wait just off the right edge until the screen reaches them (as in the classic game) */
+    if (sx >= VIEW_W && is_walker(e->kind)) return;
+
     switch (e->kind) {
     case E_GLOOP: case E_DOME: case E_DOME_RED:
-        if (ent_physics(e, 0x60, 0x400)) e->vx = (int16_t)-e->vx;
+        if (ent_physics(0x60, 0x400)) e->vx = (int16_t)-e->vx;
         if (e->kind == E_DOME_RED && e->ground) {          /* turn at ledges */
-            uint16_t fx = (uint16_t)(e->vx > 0 ? e->x + 13 : e->x + 2);
-            if (!solid_px(fx, (int16_t)(e->y + 17))) e->vx = (int16_t)-e->vx;
+            /* (only when the front foot enters a new cell: x & 15 == 3 going right, 13 going left) */
+            uint8_t xl = (uint8_t)((uint8_t)e->x & 15);
+            if (e->vx > 0 ? xl == 3 : xl == 13) {
+                uint16_t fx = (uint16_t)(e->vx > 0 ? e->x + 13 : e->x + 2);
+                if (!solid_px(fx, (int16_t)(e->y + 17))) e->vx = (int16_t)-e->vx;
+            }
         }
         e->t++;
         break;
     case E_JET:
-        if (ent_physics(e, 0x30, 0x400)) e->vx = (int16_t)-e->vx;
+        if (ent_physics(0x30, 0x400)) e->vx = (int16_t)-e->vx;
         if (e->ground) { e->vy = -0x380; e->ground = 0; }
         e->t++;
         break;
     case E_SHELL: case E_SHELL_RED:
         if (e->t2) e->t2--;
-        if (ent_physics(e, 0x60, 0x400) && e->vx) {
+        if (ent_physics(0x60, 0x400) && e->vx) {
             e->vx = (int16_t)-e->vx;
             if ((int16_t)(e->x - w->cam_x) < 176) w->sfx |= EV_BUMP;
         }
@@ -138,8 +183,8 @@ static void update_ent(Ent *e)
             }
         } else {                                           /* sliding: knock others over */
             Ent *o;
-            for (o = w->e; o != w->e + MAX_ENTS; o++) {
-                if (o == e || !is_enemy(o->kind) || o->kind == E_CHOMP || o->state != ES_LIVE) continue;
+            for (o = slots; o != slots + MAX_ENTS; o++) {
+                if (o == cur || !is_enemy(o->kind) || o->kind == E_CHOMP || o->state != ES_LIVE) continue;
                 if (overlap((int16_t)e->x, e->y, (int16_t)(e->x + 15), (int16_t)(e->y + 15),
                             (int16_t)o->x, o->y, (int16_t)(o->x + 15), (int16_t)(o->y + 15))) {
                     ent_kill_by(o, (uint8_t)(SC_500 + e->chain), e->vx > 0 ? 1 : -1);
@@ -201,20 +246,28 @@ static void update_ent(Ent *e)
     }
 }
 
-/* walkers turn around when they bump into each other */
+#undef e
 
+/* walkers turn around when they bump into each other (checked on even frames: they move half a
+   pixel a frame, so a frame late is invisible, and it halves the cost of a crowded screen) */
 static void ent_bumps(void)
 {
-    Ent *a, *b;
-    for (a = w->e; a != w->e + MAX_ENTS - 1; a++) {
-        if (!is_walker(a->kind) || a->state != ES_LIVE) continue;
-        for (b = a + 1; b != w->e + MAX_ENTS; b++) {
-            int16_t dx, dy;
-            if (!b->kind) continue;
+    SST Ent *list[MAX_ENTS];
+    SST uint8_t n, i, j;
+    SST Ent *a, *b;
+    SST int16_t dx, dy;
+    if (w->frames & 1) return;
+    n = 0;
+    for (a = w->e; a != w->e + MAX_ENTS; a++)
+        if (a->state == ES_LIVE && (is_walker(a->kind) || ((a->kind == E_SHELL || a->kind == E_SHELL_RED) && !a->vx)))
+            list[n++] = a;
+    for (i = 0; i + 1 < n; i++) {
+        a = list[i];
+        for (j = (uint8_t)(i + 1); j < n; j++) {
+            b = list[j];
+            if (!is_walker(a->kind) && !is_walker(b->kind)) continue;     /* two resting pods */
             dx = (int16_t)(b->x - a->x);
             if (dx > 14 || dx < -14) continue;
-            if (!(is_walker(b->kind) || ((b->kind == E_SHELL || b->kind == E_SHELL_RED) && !b->vx))) continue;
-            if (b->state != ES_LIVE) continue;
             dy = (int16_t)(b->y - a->y);
             if (dy > 14 || dy < -14) continue;
             if (dx >= 0) { if (a->vx > 0) a->vx = (int16_t)-a->vx; if (b->vx < 0) b->vx = (int16_t)-b->vx; }
@@ -309,10 +362,11 @@ static void update_item(void)
             if (e->kind == E_NOVA) { e->vy = -0x300; }
         }
     } else if (e->kind != E_BLASTER) {
+        cur = e;                                           /* ent_physics works on cur */
         if (e->kind == E_NOVA) {
-            if (ent_physics(e, 0x30, 0x400)) e->vx = (int16_t)-e->vx;
+            if (ent_physics(0x30, 0x400)) e->vx = (int16_t)-e->vx;
             if (e->ground) { e->vy = -0x480; e->ground = 0; }
-        } else if (ent_physics(e, 0x60, 0x400)) {
+        } else if (ent_physics(0x60, 0x400)) {
             e->vx = (int16_t)-e->vx;
         }
     }
@@ -461,9 +515,33 @@ void ents_bump_above(uint16_t col, uint8_t row) SIM_BANKED
 void ents_update(void) SIM_BANKED
 {
     Ent *e;
+    uint8_t n = 0;
     PROF(5);
     for (e = w->e; e != w->e + MAX_ENTS; e++)
-        if (e->kind) update_ent(e);
+        if (e->kind) {
+            n++;
+            /* the common case, a walker strolling along between cell boundaries, is done in place
+               (nothing but its x and its step clock can change) */
+            if ((e->kind == E_GLOOP || e->kind == E_DOME) && e->state == ES_LIVE && e->ground
+                && e->vx <= 0x100 && e->vx >= -0x100) {
+                int16_t sum = (int16_t)((int16_t)e->xs + e->vx);
+                uint16_t nx = (uint16_t)(e->x + (sum >> 8));
+                uint8_t xl = (uint8_t)((uint8_t)nx & 15);
+                int16_t sx = (int16_t)(nx - w->cam_x);
+                if (sx >= -48 && sx < VIEW_W && xl != 13 && xl != 4 && xl != (e->vx > 0 ? 2 : 14)) {
+                    e->x = nx;
+                    e->xs = (uint8_t)(sum & 0xFF);
+                    e->t++;
+                    FAST_HIT();
+                    continue;
+                }
+            }
+            ENT_PROF_A();
+            cur = e;
+            update_ent();
+            ENT_PROF_B(e - w->e);
+        }
+    w->n_ents = n;
     PROF(6);
     ent_bumps();
     if (w->pstate == PS_PLAY) peter_vs_ents();

@@ -1,6 +1,8 @@
 /* sound_data.h - songs, instruments, drums and sfx scripts (SPEEDY PURPLE PETER).
  * Included by sound.c only (and by tests/test_sound.c, which walks the data).
- * All melodies are original.
+ * All melodies are original: one theme ("Starlight Sprint") in three moods, for running
+ * (MAIN), the title (TITLE: slow and wide) and invincibility (NOVA: at a gallop), quoted by
+ * the jingles.
  *
  * ---- song streams ----------------------------------------------------------------------
  * One byte stream per channel; a row is one 16th note (the song's rate sets its length).
@@ -10,8 +12,11 @@
  *   0x82 p      call pattern p (SP_*; one level deep)
  *   0x83        return from a pattern
  *   0x84 t      transpose the following notes by t semitones (signed)
- *   0x85 i..    instrument I_* (2 bytes on the pulses, 3 on the wave channel)
+ *   0x85 i..    instrument I_* (3 bytes: see the instruments below)
  *   0x86        rest (the pulses ring out, the bass fades)
+ *   0x87        slide: the next note scoops up into place (CH2 lead; CH1 ignores it)
+ *   0x88 xy     arpeggio (CH1): the notes play as root, +x, +y semitones, a frame each (0: off)
+ *   0x89 t p    transpose by t, then call pattern p (the chord changes of bass and harmony)
  *   0xC0+n-1    length: the following notes / rests last n rows (1..64)
  * Every channel of a looping song spans the same number of rows (tests/test_sound.c checks it,
  * and that every note is in the song's key and inside the note table).
@@ -33,6 +38,9 @@
 
 /* ------------------------------------------------------------------ stream bytes */
 #define REST     0x86
+#define SL       0x87            /* the next note slides up into place (CH2) */
+#define ARP(xy)  0x88, (xy)      /* CH1: notes play as root, +x, +y (0x00: off) */
+#define TCALL(t, p) 0x89, (uint8_t)(t), (p)   /* transpose by t, then call pattern p */
 #define SEND_CH  0x80
 #define LOOP     0x81
 #define CALL(p)  0x82, (p)
@@ -43,6 +51,9 @@
 
 #define SB_NOTES 0x80            /* below: a note */
 #define SB_REST  0x86
+#define SB_SLIDE 0x87
+#define SB_ARP   0x88
+#define SB_TCALL 0x89
 #define SB_END   0x80
 #define SB_LOOP  0x81
 #define SB_CALL  0x82
@@ -52,26 +63,39 @@
 #define SB_LEN   0xC0
 
 /* ------------------------------------------------------------------ instruments */
-/* INS(I_x) puts the instrument's bytes in the stream:
-   pulse (CH1, CH2): NRx1 (duty), NRx2 (envelope, always falling, volume >= 1)
+/* INS(I_x) puts the instrument's bytes in the stream (3 bytes):
+   pulse (CH1, CH2): NRx1 (duty), NRx2 (envelope, always falling, volume >= 1),
+                     vibrato delay in frames (CH2 only; 0 = no vibrato)
    wave (CH3):       peak level, frames at the peak (0 = none), sustain level
                      (levels: 0 = mute, 1 = 25%, 2 = 50%, 3 = 100%) */
-#define I_LEAD   0x40, 0xB2      /* 25% duty, bright pluck */
-#define I_STAB   0x80, 0x61      /* short offbeat chord stab */
-#define I_PAD    0x80, 0x66      /* soft long tone */
-#define I_ARP    0x00, 0x51      /* 12.5% sparkle, very short */
-#define I_NLEAD  0x40, 0xB3      /* invincible lead */
-#define I_TLEAD  0x80, 0xA5      /* title lead: round, slow fade */
-#define I_ECHO   0x00, 0x34      /* title echo, an octave up, quiet */
-#define I_JLEAD  0x80, 0xB4      /* jingle lead */
-#define I_JHARM  0x80, 0x74      /* jingle harmony */
+/* MAIN */
+#define I_LV     0x80, 0xC7, 14  /* verse lead: 50% duty, warm and long, vibrato after ~1/4 s */
+#define I_LC     0x40, 0xF7, 10  /* chorus lead: 25% duty, bright, soaring */
+#define I_LB     0x40, 0xB2, 0   /* bridge lead: staccato, no vibrato */
+#define I_AV     0x80, 0x63, 0   /* verse chords: soft 50% arps */
+#define I_AC     0x40, 0xA2, 0   /* chorus chords: bright 25% arps, eighths */
+#define I_AB     0x00, 0x82, 0   /* bridge chords: thin 12.5%, choppy */
+#define I_ECHO   0x00, 0x66, 0   /* the lead's echo, 3 rows late, quiet */
+/* TITLE */
+#define I_TL     0x80, 0xD7, 20 /* round lead, slow fade, lazy vibrato */
+#define I_TLC    0x40, 0xE7, 16  /* chorus: brighter */
+#define I_TPAD   0x80, 0x77, 0   /* shimmering chord pads */
+/* NOVA */
+#define I_NL     0x40, 0xD5, 8   /* frantic lead */
+#define I_NA     0x00, 0x72, 0   /* sparkle arps */
+/* jingles */
+#define I_JL     0x80, 0xC6, 12
+#define I_JH     0x80, 0x75, 0
+#define I_HL     0x40, 0xC3, 0
+/* bass */
 #define I_BASS   3, 4, 2         /* plucky: 100% for 4 frames, then 50% */
-#define I_BSOFT  2, 0, 2         /* steady 50% */
+#define I_BDRV   3, 2, 2         /* sixteenths: a short peak */
+#define I_BSOFT  3, 0, 3         /* steady 100% */
 #define I_BLONG  3, 30, 2        /* jingle bass */
 
 /* ------------------------------------------------------------------ drums (CH4) */
 /* { NR41 length, NR42 envelope (falling), NR43 noise, NR44 (0x80 trigger | 0x40 length) } */
-enum { D_KICK, D_SNARE, D_HAT, D_OHAT, D_THUD, D_CRASH, D_SOFT, NUM_DRUMS };
+enum { D_KICK, D_SNARE, D_HAT, D_OHAT, D_THUD, D_CRASH, D_SOFT, D_TOM, NUM_DRUMS };
 static const uint8_t snd_drum[NUM_DRUMS][4] = {
     { 0x00, 0xB1, 0x62, 0x80 },   /* KICK  low thump */
     { 0x00, 0xA1, 0x32, 0x80 },   /* SNARE */
@@ -80,7 +104,14 @@ static const uint8_t snd_drum[NUM_DRUMS][4] = {
     { 0x00, 0xC2, 0x74, 0x80 },   /* THUD  jingle accent */
     { 0x00, 0xA4, 0x11, 0x80 },   /* CRASH */
     { 0x38, 0x31, 0x00, 0xC0 },   /* SOFT  title shaker */
+    { 0x00, 0xB2, 0x55, 0x80 },   /* TOM   for fills */
 };
+#define K D_KICK
+#define S D_SNARE
+#define H D_HAT
+#define O D_OHAT
+#define X D_CRASH
+#define T D_TOM
 
 /* ------------------------------------------------------------------ waves (CH3) */
 enum { WV_PUNCH, WV_SOFT, NUM_WAVES };
@@ -90,210 +121,226 @@ static const uint8_t snd_wave[NUM_WAVES][16] = {
 };
 
 /* ================================================================== patterns */
-/* ---- MAIN: "Purple Streak" - D major, 150 BPM, A A' B B' C A(up an octave) = 24 bars ---- */
-/* lead, bars 1-3 (D | Bm | G) */
-static const uint8_t p_ma1[] = {
-    LEN(3), Fs5, E5, LEN(2), D5, LEN(4), A5, LEN(2), Fs5, E5,
-    LEN(3), D5, Cs5, LEN(2), B4, LEN(4), Fs5, LEN(2), D5, Cs5,
-    LEN(2), B4, D5, G5, Fs5, G5, LEN(4), B5, LEN(2), A5,
+/* ---- MAIN: "Starlight Sprint" - E minor verses, a G major chorus, 150 BPM ----
+   intro (2 bars, once) | verse 1 (8) | verse 2 (8, climbs) | chorus (8) | bridge (4, fill) | loop
+   verse:  Em  C  G  D | Em  C  Am  B     (i VI III VII | i VI iv V)
+   chorus: C   D  G  Em | C  D  G   G     (the relative major: IV V I vi | IV V I I)
+   bridge: Am  Em C  B                    (one bar = 16 rows = 1.6 s)
+   The hook: a rising minor arpeggio onto a held fifth, answered by a falling 3-3-2 line.
+   Patterns are two bars each (fewer calls to parse). */
+/* verse bars 1-2 (Em | C): the hook */
+static const uint8_t p_v12[] = { LEN(2), B4, E5, G5, LEN(10), SL, B5,
+                                 LEN(3), C6, B5, LEN(2), A5, LEN(4), G5, E5, RET };
+/* bars 3-4 (G | D): the hook a third higher, an open ending */
+static const uint8_t p_v34[] = { LEN(2), D5, G5, B5, LEN(10), SL, D6,
+                                 LEN(3), E6, D6, LEN(2), A5, LEN(4), Fs5, A5, RET };
+/* bars 5-6 (Em | C): the hook, its answer turns upwards */
+static const uint8_t p_v56[] = { LEN(2), B4, E5, G5, LEN(10), SL, B5,
+                                 LEN(3), C6, B5, LEN(2), A5, G5, A5, B5, C6, RET };
+/* bars 7-8 (Am | B), verse 1: up to the high E, down the dominant seventh */
+static const uint8_t p_v78[] = { LEN(8), SL, E6, LEN(2), D6, C6, B5, A5,
+                                 LEN(6), B5, LEN(2), A5, LEN(4), Fs5, Ds5, RET };
+/* bars 7-8, verse 2: the climb into the chorus (A minor in quarters, a held leading tone) */
+static const uint8_t p_v78b[] = { LEN(4), A5, C6, E6, A6,
+                                  LEN(6), SL, Fs6, LEN(2), E6, LEN(8), SL, Ds6, RET };
+/* chorus bars 1-2 (C | D): long-short-turn, then a step down */
+static const uint8_t p_c12[] = { LEN(6), SL, E6, LEN(2), D6, LEN(4), E6, G6,
+                                 LEN(6), SL, Fs6, LEN(2), E6, LEN(4), D6, A5, RET };
+/* bars 3-4 (G | Em): the climb to the held G, and back */
+static const uint8_t p_c34[] = { LEN(4), B5, D6, LEN(8), SL, G6,
+                                 LEN(4), Fs6, E6, LEN(8), B5, RET };
+/* bars 5-6 (C | D): again, a step higher */
+static const uint8_t p_c56[] = { LEN(6), SL, E6, LEN(2), D6, LEN(4), E6, G6,
+                                 LEN(6), SL, A6, LEN(2), G6, LEN(4), Fs6, D6, RET };
+/* bars 7-8 (G): the summit, held, then a run down into the bridge */
+static const uint8_t p_c78[] = { LEN(12), SL, B6, LEN(2), A6, G6,
+                                 LEN(2), D6, E6, LEN(4), G6, LEN(2), Fs6, E6, D6, B5, RET };
+/* bridge (Am | Em | C | B): staccato, the hook's rhythm in eighths, down to the D# */
+static const uint8_t p_br[] = {
+    LEN(2), A5, LEN(1), A5, REST, LEN(2), C6, A5, LEN(4), E6, LEN(2), D6, C6,
+    LEN(2), B5, LEN(1), B5, REST, LEN(2), G5, B5, LEN(4), E6, LEN(2), D6, B5,
+    LEN(2), C6, LEN(1), C6, REST, LEN(2), E6, G6, E6, C6, G5, E5,
+    LEN(2), Ds6, B5, Fs5, B5, A5, Fs5, LEN(4), Ds5,
     RET };
-/* bar 4 (A), first ending */
-static const uint8_t p_mae[] = { LEN(3), A5, G5, LEN(2), Fs5, LEN(6), E5, LEN(2), REST, RET };
-/* bar 4 (A), second ending: climbs into B */
-static const uint8_t p_ma2e[] = { LEN(2), E5, Fs5, A5, B5, LEN(3), Cs6, D6, LEN(2), E6, RET };
-/* B, bars 5-6 (G | A) */
-static const uint8_t p_mb1[] = {
-    LEN(6), D6, LEN(2), B5, LEN(4), A5, G5,
-    LEN(6), A5, LEN(2), Cs6, LEN(4), E6, Cs6,
-    RET };
-/* B, bars 7-8 (F#m | Bm) */
-static const uint8_t p_mbe[] = {
-    LEN(6), Cs6, LEN(2), A5, LEN(4), Fs5, LEN(2), A5, Cs6,
-    LEN(6), B5, LEN(2), Fs5, B5, Cs6, LEN(4), D6,
-    RET };
-/* B', bars 7-8 (G | A) */
-static const uint8_t p_mb2e[] = {
-    LEN(4), B5, D6, G6, LEN(2), Fs6, E6,
-    LEN(8), E6, LEN(4), Cs6, A5,
-    RET };
-/* C, the bridge (Bm | G | D | A) */
-static const uint8_t p_mc[] = {
-    LEN(2), Fs5, LEN(1), Fs5, REST, LEN(2), B5, D6, Cs6, B5, A5, Fs5,
-    LEN(2), G5, LEN(1), G5, REST, LEN(2), B5, D6, LEN(4), E6, D6,
-    LEN(2), Fs5, A5, D6, A5, LEN(4), Fs6, E6,
-    LEN(2), E6, D6, Cs6, A5, B5, Cs6, LEN(4), E6,
-    RET };
-/* offbeat stabs, one bar each */
-static const uint8_t p_hd[]  = { LEN(2), REST, Fs4, REST, A4, REST, Fs4, REST, A4, RET };
-static const uint8_t p_hbm[] = { LEN(2), REST, D4, REST, Fs4, REST, D4, REST, Fs4, RET };
-static const uint8_t p_hg[]  = { LEN(2), REST, G4, REST, B4, REST, G4, REST, B4, RET };
-static const uint8_t p_ha[]  = { LEN(2), REST, A4, REST, Cs5, REST, A4, REST, Cs5, RET };
-/* B section pads (two half notes per bar) */
-static const uint8_t p_pg[]  = { LEN(8), B4, D5, RET };
-static const uint8_t p_pa[]  = { LEN(8), Cs5, E5, RET };
-static const uint8_t p_pfm[] = { LEN(8), Cs5, A4, RET };
-static const uint8_t p_pbm[] = { LEN(8), D5, B4, RET };
-/* bass in D, transposed per chord: bouncing octaves, and a syncopated bridge figure */
-static const uint8_t p_bo[] = { LEN(2), D2, D3, D2, D3, D2, D3, A2, D3, RET };
-static const uint8_t p_bs[] = { LEN(3), D2, D2, LEN(2), D3, LEN(3), D2, D2, LEN(2), A2, RET };
+/* CH1 chords (written in E: transpose per chord).  Verse: 3+3+2 */
+static const uint8_t p_armin[] = { ARP(0x37), LEN(6), E4, E4, LEN(4), E4, RET };
+static const uint8_t p_armaj[] = { ARP(0x47), LEN(6), E4, E4, LEN(4), E4, RET };
+/* chorus / bridge / nova: eighths (the first chorus bar is 13 rows: the echo before it
+   started 3 rows late) */
+static const uint8_t p_abmin[] = { ARP(0x37), LEN(2), E4, E4, E4, E4, E4, E4, E4, E4, RET };
+static const uint8_t p_abmaj[] = { ARP(0x47), LEN(2), E4, E4, E4, E4, E4, E4, E4, E4, RET };
+static const uint8_t p_ab13[]  = { ARP(0x47), LEN(3), E4, LEN(2), E4, E4, E4, E4, E4, RET };
+/* bass in E (transpose per chord): octave eighths, driving sixteenths, a syncopated bridge */
+static const uint8_t p_b8[]  = { LEN(2), E2, E3, E2, E3, E2, E3, B2, E3, RET };
+static const uint8_t p_b16[] = { LEN(1), E2, E2, E3, E2, E2, E3, E2, E3, E2, E2, E3, E2, E2, E3, B2, E3, RET };
+static const uint8_t p_bsy[] = { LEN(3), E2, E2, LEN(2), E3, LEN(3), E2, E2, LEN(2), B2, RET };
 /* drums */
-static const uint8_t p_da[] = { LEN(2), D_KICK, D_HAT, D_SNARE, D_HAT, D_KICK, D_KICK, D_SNARE,
-                                LEN(1), D_HAT, D_HAT, RET };
-static const uint8_t p_df[] = { LEN(2), D_KICK, D_HAT, D_SNARE, D_HAT, LEN(1), D_SNARE, D_SNARE,
-                                LEN(2), D_SNARE, LEN(1), D_SNARE, D_SNARE, LEN(2), D_CRASH, RET };
-static const uint8_t p_db[] = { LEN(4), D_KICK, LEN(2), D_HAT, D_HAT, LEN(4), D_SNARE, LEN(2), D_HAT,
-                                D_OHAT, RET };
-static const uint8_t p_dc[] = { LEN(2), D_KICK, D_OHAT, D_SNARE, D_OHAT, D_KICK, D_OHAT, D_SNARE,
-                                D_OHAT, RET };
+static const uint8_t p_dv[]  = { LEN(2), K, H, S, H, K, K, S, LEN(1), H, H, RET };       /* verse */
+static const uint8_t p_dvx[] = { LEN(2), X, H, S, H, K, K, S, LEN(1), H, H, RET };       /* + crash */
+static const uint8_t p_dc[]  = { LEN(2), K, O, S, O, K, K, S, O, RET };                  /* chorus */
+static const uint8_t p_dcx[] = { LEN(2), X, O, S, O, K, K, S, O, RET };
+static const uint8_t p_df[]  = { LEN(2), K, H, S, H, LEN(1), S, S, S, S, LEN(2), S, S, RET };
+static const uint8_t p_df2[] = { LEN(2), K, S, K, S, LEN(1), S, S, S, S, S, S, S, S, RET };
+static const uint8_t p_db[]  = { LEN(4), K, LEN(2), H, H, LEN(4), S, LEN(2), H, H, RET };  /* bridge */
+static const uint8_t p_dbf[] = { LEN(2), S, T, S, T, LEN(1), S, S, T, T, S, S, T, T, RET }; /* big fill */
+static const uint8_t p_di[]  = { LEN(4), K, H, K, LEN(2), S, S, RET };                   /* intro */
 
-/* ---- NOVA: "Supernova" - E major, 180 BPM, 8 bars (E | C#m | A | B) x2 ---- */
-static const uint8_t p_arpmaj[] = { LEN(1), E4, Gs4, B4, E5, Gs5, E5, B4, Gs4,
-                                    E4, Gs4, B4, E5, Gs5, B5, Gs5, E5, RET };
-static const uint8_t p_arpmin[] = { LEN(1), E4, G4, B4, E5, G5, E5, B4, G4,
-                                    E4, G4, B4, E5, G5, B5, G5, E5, RET };
-static const uint8_t p_nv[] = {
-    LEN(6), E6, LEN(2), Ds6, LEN(4), E6, B5,
-    LEN(6), Cs6, LEN(2), B5, LEN(4), Cs6, Gs5,
-    LEN(4), A5, B5, Cs6, E6,
-    LEN(8), Ds6, Fs6,
-    LEN(6), E6, LEN(2), Fs6, LEN(4), Gs6, E6,
-    LEN(6), E6, LEN(2), Ds6, LEN(4), Cs6, Gs5,
-    LEN(4), A5, Cs6, E6, A6,
-    LEN(4), Gs6, Fs6, Ds6, B5,
-    RET };
-static const uint8_t p_dn[]  = { LEN(2), D_KICK, D_HAT, D_SNARE, D_HAT, D_KICK, D_HAT, D_SNARE, D_HAT, RET };
-static const uint8_t p_dnf[] = { LEN(2), D_KICK, D_HAT, D_SNARE, D_HAT,
-                                 LEN(1), D_SNARE, D_SNARE, D_SNARE, D_SNARE, D_SNARE, D_SNARE,
-                                 LEN(2), D_CRASH, RET };
-
-/* ---- TITLE: the main theme, slow and spacey, with an echo an octave up ---- */
-static const uint8_t p_bw[] = { LEN(8), D3, A2, RET };
+/* ---- TITLE: the same theme, slow and wide: chorus first, then the verse ---- */
+static const uint8_t p_padmin[] = { ARP(0x37), LEN(8), E4, E4, RET };
+static const uint8_t p_padmaj[] = { ARP(0x47), LEN(8), E4, E4, RET };
+static const uint8_t p_bw[]  = { LEN(8), E3, B2, RET };
 static const uint8_t p_dt[]  = { LEN(4), D_SOFT, D_SOFT, D_SOFT, D_SOFT, RET };
-static const uint8_t p_dt2[] = { LEN(4), D_SOFT, D_SOFT, D_SOFT, D_OHAT, RET };
+static const uint8_t p_dt2[] = { LEN(4), K, D_SOFT, D_SOFT, O, RET };
 
-/* ---- HURRY: three rising stabs ---- */
-static const uint8_t p_hur[] = { LEN(1), E5, Gs5, B5, LEN(3), E6,
-                                 LEN(1), F5, A5, C6, LEN(3), F6,
-                                 LEN(1), Fs5, As5, Cs6, LEN(8), Fs6, RET };
+/* ---- NOVA: "Supernova" - G major, 180 BPM: the chorus hook at a gallop ----
+   G  D  Em  C | G  D  C  D */
+static const uint8_t p_nv[] = {
+    LEN(3), B5, LEN(1), A5, LEN(4), B5, D6, G6,
+    LEN(3), A5, LEN(1), G5, LEN(4), A5, D6, Fs6,
+    LEN(3), G6, LEN(1), Fs6, LEN(4), E6, B5, E6,
+    LEN(3), E6, LEN(1), D6, LEN(4), C6, LEN(6), SL, G6, LEN(2), E6,
+    LEN(3), B5, LEN(1), A5, LEN(4), B5, D6, G6,
+    LEN(3), A5, LEN(1), G5, LEN(4), A5, D6, A6,
+    LEN(3), G6, LEN(1), E6, LEN(2), C6, E6, G6, E6, G6, A6,
+    LEN(8), SL, Fs6, LEN(2), D6, E6, Fs6, A6,
+    RET };
+static const uint8_t p_dn[]  = { LEN(2), K, H, S, H, K, H, S, H, RET };
+static const uint8_t p_dnf[] = { LEN(2), K, H, S, H, LEN(1), S, S, S, S, S, S, LEN(2), X, RET };
+
+/* ---- HURRY: VI - VII - i, rising stabs onto the hook's chord ---- */
+static const uint8_t p_hur[] = { LEN(1), C5, E5, G5, LEN(3), C6,
+                                 LEN(1), D5, Fs5, A5, LEN(3), D6,
+                                 LEN(1), E5, G5, B5, LEN(8), SL, E6, RET };
 
 enum {
-    SP_MA1, SP_MAE, SP_MA2E, SP_MB1, SP_MBE, SP_MB2E, SP_MC,
-    SP_HD, SP_HBM, SP_HG, SP_HA, SP_PG, SP_PA, SP_PFM, SP_PBM,
-    SP_BO, SP_BS, SP_DA, SP_DF, SP_DB, SP_DC,
-    SP_ARPMAJ, SP_ARPMIN, SP_NV, SP_DN, SP_DNF,
-    SP_BW, SP_DT, SP_DT2, SP_HUR,
+    SP_V12, SP_V34, SP_V56, SP_V78, SP_V78B, SP_C12, SP_C34, SP_C56, SP_C78, SP_BR,
+    SP_ARMIN, SP_ARMAJ, SP_ABMIN, SP_ABMAJ, SP_AB13, SP_B8, SP_B16, SP_BSY,
+    SP_DV, SP_DVX, SP_DC, SP_DCX, SP_DF, SP_DF2, SP_DB, SP_DBF, SP_DI,
+    SP_PADMIN, SP_PADMAJ, SP_BW, SP_DT, SP_DT2, SP_NV, SP_DN, SP_DNF, SP_HUR,
     NUM_SP
 };
 static const uint8_t * const snd_pat[NUM_SP] = {
-    p_ma1, p_mae, p_ma2e, p_mb1, p_mbe, p_mb2e, p_mc,
-    p_hd, p_hbm, p_hg, p_ha, p_pg, p_pa, p_pfm, p_pbm,
-    p_bo, p_bs, p_da, p_df, p_db, p_dc,
-    p_arpmaj, p_arpmin, p_nv, p_dn, p_dnf,
-    p_bw, p_dt, p_dt2, p_hur,
+    p_v12, p_v34, p_v56, p_v78, p_v78b, p_c12, p_c34, p_c56, p_c78, p_br,
+    p_armin, p_armaj, p_abmin, p_abmaj, p_ab13, p_b8, p_b16, p_bsy,
+    p_dv, p_dvx, p_dc, p_dcx, p_df, p_df2, p_db, p_dbf, p_di,
+    p_padmin, p_padmaj, p_bw, p_dt, p_dt2, p_nv, p_dn, p_dnf, p_hur,
 };
 
 /* ================================================================== songs (orders) */
-/* chord transposes for the D bass figures */
-#define B_D   TR(0)
-#define B_BM  TR(9)
-#define B_G   TR(5)
-#define B_A   TR(7)
-#define B_FSM TR(4)
+/* chords: transposes from E for the bass figures and arps, which are written in E */
+#define C_EM 0
+#define C_C  (-4)
+#define C_D  (-2)
+#define C_G  3
+#define C_AM 5
+#define C_B  7
+#define AMIN(c)  TCALL(c, SP_ARMIN)
+#define AMAJ(c)  TCALL(c, SP_ARMAJ)
+#define ABMAJ(c) TCALL(c, SP_ABMAJ)
+#define ABMIN(c) TCALL(c, SP_ABMIN)
 
-/* MAIN */
+#define VERSE1 CALL(SP_V12), CALL(SP_V34), CALL(SP_V56), CALL(SP_V78)
+#define VERSE2 CALL(SP_V12), CALL(SP_V34), CALL(SP_V56), CALL(SP_V78B)
+#define CHORUS CALL(SP_C12), CALL(SP_C34), CALL(SP_C56), CALL(SP_C78)
+
+/* MAIN: each channel starts with the 2-bar intro, then loops its body */
+static const uint8_t s_main_lead_in[] = { INS(I_LV), LEN(32), REST, LOOP };
 static const uint8_t s_main_lead[] = {
-    INS(I_LEAD), TR(0),
-    CALL(SP_MA1), CALL(SP_MAE), CALL(SP_MA1), CALL(SP_MA2E),
-    CALL(SP_MB1), CALL(SP_MBE), CALL(SP_MB1), CALL(SP_MB2E),
-    CALL(SP_MC),
-    TR(12), CALL(SP_MA1), CALL(SP_MAE),
+    INS(I_LV), TR(0), VERSE1, VERSE2,
+    INS(I_LC), CHORUS,
+    INS(I_LB), CALL(SP_BR),
     LOOP };
+static const uint8_t s_main_harm_in[] = { INS(I_AV), AMIN(C_EM), AMIN(C_EM), LOOP };
 static const uint8_t s_main_harm[] = {
-    INS(I_STAB),
-    CALL(SP_HD), CALL(SP_HBM), CALL(SP_HG), CALL(SP_HA),
-    CALL(SP_HD), CALL(SP_HBM), CALL(SP_HG), CALL(SP_HA),
-    INS(I_PAD),
-    CALL(SP_PG), CALL(SP_PA), CALL(SP_PFM), CALL(SP_PBM),
-    CALL(SP_PG), CALL(SP_PA), CALL(SP_PG), CALL(SP_PA),
-    INS(I_STAB),
-    CALL(SP_HBM), CALL(SP_HG), CALL(SP_HD), CALL(SP_HA),
-    CALL(SP_HD), CALL(SP_HBM), CALL(SP_HG), CALL(SP_HA),
+    INS(I_AV),                                                    /* verse 1: chords */
+    AMIN(C_EM), AMAJ(C_C), AMAJ(C_G), AMAJ(C_D), AMIN(C_EM), AMAJ(C_C), AMIN(C_AM), AMAJ(C_B),
+    INS(I_ECHO), ARP(0), TR(0), LEN(3), REST, VERSE2,             /* verse 2: the echo */
+    INS(I_AC), TCALL(C_C, SP_AB13), ABMAJ(C_D), ABMAJ(C_G), ABMIN(C_EM),   /* chorus: chords */
+    ABMAJ(C_C), ABMAJ(C_D), ABMAJ(C_G), ABMAJ(C_G),
+    INS(I_AB), ABMIN(C_AM), ABMIN(C_EM), ABMAJ(C_C), ABMAJ(C_B),  /* bridge */
     LOOP };
+#define B8(c) TCALL(c, SP_B8)
+#define B16(c) TCALL(c, SP_B16)
+#define BSY(c) TCALL(c, SP_BSY)
+static const uint8_t s_main_bass_in[] = { INS(I_BASS), B8(C_EM), B8(C_EM), LOOP };
 static const uint8_t s_main_bass[] = {
     INS(I_BASS),
-    B_D, CALL(SP_BO), B_BM, CALL(SP_BO), B_G, CALL(SP_BO), B_A, CALL(SP_BO),
-    B_D, CALL(SP_BO), B_BM, CALL(SP_BO), B_G, CALL(SP_BO), B_A, CALL(SP_BO),
-    B_G, CALL(SP_BO), B_A, CALL(SP_BO), B_FSM, CALL(SP_BO), B_BM, CALL(SP_BO),
-    B_G, CALL(SP_BO), B_A, CALL(SP_BO), B_G, CALL(SP_BO), B_A, CALL(SP_BO),
-    B_BM, CALL(SP_BS), B_G, CALL(SP_BS), B_D, CALL(SP_BS), B_A, CALL(SP_BS),
-    B_D, CALL(SP_BO), B_BM, CALL(SP_BO), B_G, CALL(SP_BO), B_A, CALL(SP_BO),
+    B8(C_EM), B8(C_C), B8(C_G), B8(C_D), B8(C_EM), B8(C_C), B8(C_AM), B8(C_B),
+    B8(C_EM), B8(C_C), B8(C_G), B8(C_D), B8(C_EM), B8(C_C), B8(C_AM), B8(C_B),
+    INS(I_BDRV),
+    B16(C_C), B16(C_D), B16(C_G), B16(C_EM), B16(C_C), B16(C_D), B16(C_G), B16(C_G),
+    INS(I_BASS),
+    BSY(C_AM), BSY(C_EM), BSY(C_C), B8(C_B),
     LOOP };
+static const uint8_t s_main_drum_in[] = { CALL(SP_DI), CALL(SP_DF2), LOOP };
 static const uint8_t s_main_drum[] = {
-    CALL(SP_DA), CALL(SP_DA), CALL(SP_DA), CALL(SP_DF),
-    CALL(SP_DA), CALL(SP_DA), CALL(SP_DA), CALL(SP_DF),
-    CALL(SP_DB), CALL(SP_DB), CALL(SP_DB), CALL(SP_DB),
-    CALL(SP_DB), CALL(SP_DB), CALL(SP_DB), CALL(SP_DF),
-    CALL(SP_DC), CALL(SP_DC), CALL(SP_DC), CALL(SP_DF),
-    CALL(SP_DA), CALL(SP_DA), CALL(SP_DA), CALL(SP_DF),
+    CALL(SP_DVX), CALL(SP_DV), CALL(SP_DV), CALL(SP_DV), CALL(SP_DV), CALL(SP_DV), CALL(SP_DV), CALL(SP_DF),
+    CALL(SP_DVX), CALL(SP_DV), CALL(SP_DV), CALL(SP_DV), CALL(SP_DV), CALL(SP_DV), CALL(SP_DV), CALL(SP_DF2),
+    CALL(SP_DCX), CALL(SP_DC), CALL(SP_DC), CALL(SP_DC), CALL(SP_DCX), CALL(SP_DC), CALL(SP_DC), CALL(SP_DF),
+    CALL(SP_DB), CALL(SP_DB), CALL(SP_DB), CALL(SP_DBF),
+    LOOP };
+
+/* TITLE: the chorus, then verse 1 (its B leads back into the chorus's C), slowly */
+#define PMIN(c) TCALL(c, SP_PADMIN)
+#define PMAJ(c) TCALL(c, SP_PADMAJ)
+static const uint8_t s_title_lead[] = { INS(I_TLC), TR(0), CHORUS, INS(I_TL), VERSE1, LOOP };
+static const uint8_t s_title_harm[] = {
+    INS(I_TPAD),
+    PMAJ(C_C), PMAJ(C_D), PMAJ(C_G), PMIN(C_EM), PMAJ(C_C), PMAJ(C_D), PMAJ(C_G), PMAJ(C_G),
+    PMIN(C_EM), PMAJ(C_C), PMAJ(C_G), PMAJ(C_D), PMIN(C_EM), PMAJ(C_C), PMIN(C_AM), PMAJ(C_B),
+    LOOP };
+#define BW(c) TCALL(c, SP_BW)
+static const uint8_t s_title_bass[] = {
+    INS(I_BSOFT),
+    BW(C_C), BW(C_D), BW(C_G), BW(C_EM), BW(C_C), BW(C_D), BW(C_G), BW(C_G),
+    BW(C_EM), BW(C_C), BW(C_G), BW(C_D), BW(C_EM), BW(C_C), BW(C_AM), BW(C_B),
+    LOOP };
+static const uint8_t s_title_drum[] = {
+    CALL(SP_DT2), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT2), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT),
+    CALL(SP_DT2), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT2), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT),
     LOOP };
 
 /* NOVA */
 static const uint8_t s_nova_arp[] = {
-    INS(I_ARP),
-    TR(0), CALL(SP_ARPMAJ), TR(-3), CALL(SP_ARPMIN), TR(5), CALL(SP_ARPMAJ), TR(7), CALL(SP_ARPMAJ),
-    TR(12), CALL(SP_ARPMAJ), TR(9), CALL(SP_ARPMIN), TR(17), CALL(SP_ARPMAJ), TR(7), CALL(SP_ARPMAJ),
+    INS(I_NA),
+    ABMAJ(C_G), ABMAJ(C_D), ABMIN(C_EM), ABMAJ(C_C), ABMAJ(C_G), ABMAJ(C_D), ABMAJ(C_C), ABMAJ(C_D),
     LOOP };
-static const uint8_t s_nova_lead[] = { INS(I_NLEAD), TR(0), CALL(SP_NV), LOOP };
+static const uint8_t s_nova_lead[] = { INS(I_NL), TR(0), CALL(SP_NV), LOOP };
 static const uint8_t s_nova_bass[] = {
-    INS(I_BASS),
-    TR(2), CALL(SP_BO), TR(-1), CALL(SP_BO), TR(7), CALL(SP_BO), TR(9), CALL(SP_BO),
-    TR(2), CALL(SP_BO), TR(-1), CALL(SP_BO), TR(7), CALL(SP_BO), TR(9), CALL(SP_BO),
+    INS(I_BDRV),
+    B16(C_G), B16(C_D), B16(C_EM), B16(C_C), B16(C_G), B16(C_D), B16(C_C), B16(C_D),
     LOOP };
 static const uint8_t s_nova_drum[] = {
     CALL(SP_DN), CALL(SP_DN), CALL(SP_DN), CALL(SP_DNF),
-    CALL(SP_DN), CALL(SP_DN), CALL(SP_DN), CALL(SP_DNF),
+    CALL(SP_DN), CALL(SP_DN), CALL(SP_DN), CALL(SP_DBF),
     LOOP };
 
-/* TITLE */
-#define TITLE_TUNE \
-    CALL(SP_MA1), CALL(SP_MAE), CALL(SP_MA1), CALL(SP_MA2E), \
-    CALL(SP_MB1), CALL(SP_MBE), CALL(SP_MB1), CALL(SP_MB2E)
-static const uint8_t s_title_lead[] = { INS(I_TLEAD), TR(0), TITLE_TUNE, LOOP };
-static const uint8_t s_title_echo[] = { INS(I_ECHO), LEN(3), REST, TR(12), TITLE_TUNE, LOOP };
-#define TITLE_ECHO_LOOP 5                      /* offset of the loop point (after the rest) */
-static const uint8_t s_title_bass[] = {
-    INS(I_BSOFT),
-    TR(0), CALL(SP_BW), TR(-3), CALL(SP_BW), TR(-7), CALL(SP_BW), TR(-5), CALL(SP_BW),
-    TR(0), CALL(SP_BW), TR(-3), CALL(SP_BW), TR(-7), CALL(SP_BW), TR(-5), CALL(SP_BW),
-    TR(-7), CALL(SP_BW), TR(-5), CALL(SP_BW), TR(4), CALL(SP_BW), TR(-3), CALL(SP_BW),
-    TR(-7), CALL(SP_BW), TR(-5), CALL(SP_BW), TR(-7), CALL(SP_BW), TR(-5), CALL(SP_BW),
-    LOOP };
-static const uint8_t s_title_drum[] = {
-    CALL(SP_DT), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT2),
-    CALL(SP_DT), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT2),
-    CALL(SP_DT), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT2),
-    CALL(SP_DT), CALL(SP_DT), CALL(SP_DT), CALL(SP_DT2),
-    LOOP };
+/* DEATH: the hook turned upside down, falling onto the D# and home (20 rows, ~2 s) */
+static const uint8_t s_death_lead[] = { INS(I_JL), LEN(3), B5, G5, E5, Ds5, LEN(8), E5, SEND_CH };
+static const uint8_t s_death_harm[] = { INS(I_JH), LEN(3), E5, B4, G4, Fs4, LEN(8), B4, SEND_CH };
+static const uint8_t s_death_bass[] = { INS(I_BLONG), LEN(9), E3, LEN(3), B2, LEN(8), E2, SEND_CH };
+static const uint8_t s_death_drum[] = { LEN(12), REST, LEN(1), D_THUD, LEN(7), REST, SEND_CH };
 
-/* DEATH: a chromatic slump in thirds, ending on a thud (18 rows, ~1.8 s) */
-static const uint8_t s_death_lead[] = { INS(I_JLEAD), LEN(3), D5, Cs5, C5, LEN(9), B4, SEND_CH };
-static const uint8_t s_death_harm[] = { INS(I_JHARM), LEN(3), B4, As4, A4, LEN(9), Gs4, SEND_CH };
-static const uint8_t s_death_bass[] = { INS(I_BLONG), LEN(3), G2, Fs2, F2, LEN(9), E2, SEND_CH };
-static const uint8_t s_death_drum[] = { LEN(12), REST, LEN(1), D_THUD, LEN(5), REST, SEND_CH };
-
-/* GAME OVER: D minor, Dm | Bb | A | Dm (32 rows, ~3.2 s) */
-static const uint8_t s_over_lead[] = { INS(I_JLEAD), LEN(4), A4, F4, F4, D4, E4, Cs4, LEN(8), D4, SEND_CH };
-static const uint8_t s_over_harm[] = { INS(I_JHARM), LEN(8), D4, As3, A3, A3, SEND_CH };
-static const uint8_t s_over_bass[] = { INS(I_BLONG), LEN(8), D3, As2, A2, D2, SEND_CH };
+/* GAME OVER: the hook, slowly, then iv - V - i (32 rows, ~3.2 s) */
+static const uint8_t s_over_lead[] = { INS(I_JL), LEN(2), B4, E5, G5, LEN(10), SL, B5,
+                                       LEN(4), A5, Fs5, LEN(8), SL, E5, SEND_CH };
+static const uint8_t s_over_harm[] = { INS(I_JH), LEN(8), G4, LEN(8), B4, LEN(4), C5, Ds5, LEN(8), B4, SEND_CH };
+static const uint8_t s_over_bass[] = { INS(I_BLONG), LEN(16), E2, LEN(4), A2, B2, LEN(8), E2, SEND_CH };
 static const uint8_t s_over_drum[] = { LEN(24), REST, LEN(1), D_THUD, LEN(7), REST, SEND_CH };
 
-/* HURRY: rising stabs over a snare roll (23 rows at 4 frames, ~1.5 s) */
-static const uint8_t s_hur_lead[] = { INS(I_LEAD), TR(0), CALL(SP_HUR), SEND_CH };
-static const uint8_t s_hur_harm[] = { INS(I_JHARM), TR(-12), CALL(SP_HUR), SEND_CH };
-static const uint8_t s_hur_bass[] = { INS(I_BASS), LEN(6), E3, F3, LEN(11), Fs3, SEND_CH };
-static const uint8_t s_hur_drum[] = { LEN(1), D_SNARE, D_SNARE, D_SNARE, D_SNARE, D_SNARE, D_SNARE,
-                                      D_SNARE, D_SNARE, D_SNARE, D_SNARE, D_SNARE, D_SNARE,
-                                      LEN(4), D_SNARE, LEN(7), D_CRASH, SEND_CH };
+/* HURRY: rising stabs over a snare roll (23 rows at 4 frames, ~1.5 s), into MAIN */
+static const uint8_t s_hur_lead[] = { INS(I_HL), TR(0), CALL(SP_HUR), SEND_CH };
+static const uint8_t s_hur_harm[] = { INS(I_JH), TR(-12), CALL(SP_HUR), SEND_CH };
+static const uint8_t s_hur_bass[] = { INS(I_BASS), LEN(6), C3, D3, LEN(11), E3, SEND_CH };
+static const uint8_t s_hur_drum[] = { LEN(1), S, S, S, S, S, S, S, S, S, S, S, S,
+                                      LEN(4), S, LEN(7), X, SEND_CH };
+
+#undef K
+#undef S
+#undef H
+#undef O
+#undef X
+#undef T
 
 /* rate: added to an 8-bit accumulator every frame, a row on each carry (256/rate frames) */
 #define SF_HURRY_ON  0x01            /* playing it sets the hurry tempo */
@@ -301,24 +348,24 @@ static const uint8_t s_hur_drum[] = { LEN(1), D_SNARE, D_SNARE, D_SNARE, D_SNARE
 #define SF_LOOPS     0x04            /* a loop (for the tests) */
 #define WV_KEEP      0xFF
 /* one row per song: rate, hurry rate, wave, flags, next song,
-   streams for CH1 harmony, CH2 lead, CH3 bass, CH4 drums, then their loop points (just after
-   the first instrument: 3 bytes on the pulses, 4 on the bass; the instrument then in force
-   must be the one the stream starts with - tests/test_sound.c checks it) */
+   streams for CH1 harmony, CH2 lead, CH3 bass, CH4 drums, then their loop points (LOOP jumps
+   there: a stream may be an intro that LOOPs into a separate body).  Every body starts by
+   setting its instrument (tests/test_sound.c checks that a loop sounds the same each time). */
 #define SONG_LIST(X) \
     /* MUS_NONE */ \
     X(0, 0, WV_KEEP, 0, MUS_NONE, 0, 0, 0, 0, 0, 0, 0, 0) \
     /* MUS_MAIN: 150 BPM (5.95 frames a row); hurry 225 BPM (4) */ \
     X(43, 64, WV_PUNCH, SF_LOOPS, MUS_NONE, \
-      s_main_harm, s_main_lead, s_main_bass, s_main_drum, \
-      s_main_harm + 3, s_main_lead + 3, s_main_bass + 4, s_main_drum) \
+      s_main_harm_in, s_main_lead_in, s_main_bass_in, s_main_drum_in, \
+      s_main_harm, s_main_lead, s_main_bass, s_main_drum) \
     /* MUS_NOVA: 180 BPM (5.02); hurry 270 BPM (3.3) */ \
     X(51, 77, WV_PUNCH, SF_LOOPS, MUS_NONE, \
       s_nova_arp, s_nova_lead, s_nova_bass, s_nova_drum, \
-      s_nova_arp + 3, s_nova_lead + 3, s_nova_bass + 4, s_nova_drum) \
-    /* MUS_TITLE: ~98 BPM (9.14) */ \
+      s_nova_arp, s_nova_lead, s_nova_bass, s_nova_drum) \
+    /* MUS_TITLE: ~100 BPM (9.14) */ \
     X(28, 28, WV_SOFT, SF_LOOPS | SF_HURRY_OFF, MUS_NONE, \
-      s_title_echo, s_title_lead, s_title_bass, s_title_drum, \
-      s_title_echo + TITLE_ECHO_LOOP, s_title_lead + 3, s_title_bass + 4, s_title_drum) \
+      s_title_harm, s_title_lead, s_title_bass, s_title_drum, \
+      s_title_harm, s_title_lead, s_title_bass, s_title_drum) \
     /* MUS_DEATH */ \
     X(43, 43, WV_PUNCH, SF_HURRY_OFF, MUS_NONE, \
       s_death_harm, s_death_lead, s_death_bass, s_death_drum, 0, 0, 0, 0) \

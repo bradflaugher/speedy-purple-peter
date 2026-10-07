@@ -428,6 +428,12 @@ static void test_mechanics(void)
         sim_init(0xBEEF);
         for (i = 0; i < 3000; i++) sim_step((uint8_t)((i % 50 < 30 ? K_A : 0) | K_RIGHT | K_B));
         CHECK(!memcmp(&a, &W, sizeof(World)), "determinism");
+        {   /* the HUD's score digits always spell the score */
+            uint32_t v = 0;
+            int k;
+            for (k = 0; k < 7; k++) v = v * 10 + W.sdig[k];
+            CHECK(v == W.score && W.score > 0, "score digits %lu vs %lu", (unsigned long)v, (unsigned long)W.score);
+        }
     }
 }
 

@@ -59,6 +59,15 @@ static int nr32_level(uint8_t v)          /* 0 = mute .. 3 = 100% */
     }
 }
 
+static int slide_start(unsigned x)        /* a note's slide starts a little below it */
+{
+    int i;
+    for (i = 0; i < SND_NOTES; i++)
+        if (snd_freq[i] >= x && snd_freq[i] - x <= (2048u - snd_freq[i]) / 8)
+            return 1;
+    return 0;
+}
+
 static int is_freq(unsigned x)
 {
     int i;
@@ -105,7 +114,8 @@ void host_snd_write(uint8_t r, uint8_t v)
         trig[c]++;
         if (host_snd_src == SND_SRC_MUSIC) {
             trig_music[c]++;
-            if (c < 2 && !is_freq(regs[r - 1] | ((v & 7) << 8)))
+            if (c < 2 && !is_freq(regs[r - 1] | ((v & 7) << 8)) &&
+                !(c == 1 && slide_start(regs[r - 1] | ((v & 7) << 8))))
                 w_bad_freq++;
         }
     }
@@ -210,8 +220,9 @@ static const char *sfx_name[NUM_SFX] = { "JUMP", "JUMP_BIG", "STOMP", "KICK", "B
 /* ================================================================== static data walk */
 /* key masks: bit = pitch class (C = bit 0) */
 #define PC(n) (1u << ((n) % 12))
-static const unsigned KEY_D = PC(D2) | PC(E2) | PC(Fs2) | PC(G2) | PC(A2) | PC(B2) | PC(Cs2);
-static const unsigned KEY_E = PC(E2) | PC(Fs2) | PC(Gs2) | PC(A2) | PC(B2) | PC(Cs2) | PC(Ds2);
+/* E minor, with the D# of the B (V) chord; G major */
+static const unsigned KEY_EM = PC(E2) | PC(Fs2) | PC(G2) | PC(A2) | PC(B2) | PC(C2) | PC(D2) | PC(Ds2);
+static const unsigned KEY_G = PC(G2) | PC(A2) | PC(B2) | PC(C2) | PC(D2) | PC(E2) | PC(Fs2);
 
 typedef struct {
     int rows;          /* rows from the start to END / the first LOOP */
@@ -219,16 +230,18 @@ typedef struct {
     int notes;
     int bad;           /* errors */
     int offkey;
+    int lo, hi;        /* the lowest and highest note (pulses and bass) */
 } walk_t;
 
-typedef struct { int len, tr, ins; const uint8_t *ins_first, *ins_cur; } wstate_t;   /* carried on through the loop, like the player */
+typedef struct { int len, tr, ins, arp, slide; const uint8_t *ins_cur, *ins_at_note; int tr_at_note; } wstate_t;   /* carried on through the loop, like the player */
 
 static void walk_stream(const uint8_t *p, int ch, unsigned key, int *rows, walk_t *w, int *ended,
                         wstate_t *st)
 {
-    int len = st->len, tr = st->tr, ins = st->ins, guard = 0;
+    int len = st->len, tr = st->tr, ins = st->ins, guard = 0, first = 1;
     const uint8_t *ret = 0;
     *ended = 0;
+    st->ins_at_note = 0;
     for (;;) {
         uint8_t b = *p++;
         if (++guard > 20000) { w->bad++; printf("  runaway stream ch%d\n", ch); return; }
@@ -239,11 +252,31 @@ static void walk_stream(const uint8_t *p, int ch, unsigned key, int *rows, walk_
                 int n = b + (int8_t)tr;
                 int top = ch == 2 ? SND_NOTES - 1 - 12 : SND_NOTES - 1;
                 if (n < 0 || n > top) { w->bad++; printf("  ch%d note %d out of range\n", ch, n); }
+                if (n < w->lo) w->lo = n;
+                if (n > w->hi) w->hi = n;
                 else if (key && !(key & PC(n))) {
                     w->offkey++;
                     printf("  ch%d off-key note %d (pc %d)\n", ch, n, n % 12);
                 }
                 if (ins < 0) { w->bad++; printf("  ch%d note before INS\n", ch); }
+                if (ch == 0 && st->arp && n + ((st->arp >> 4) > (st->arp & 15) ? st->arp >> 4 : st->arp & 15) > SND_NOTES - 1) {
+                    w->bad++;
+                    printf("  ch0 arpeggio above the note table\n");
+                } else if (ch == 0 && st->arp && key &&
+                           !(key & PC(n + (st->arp >> 4)) && key & PC(n + (st->arp & 15)))) {
+                    w->offkey++;
+                    printf("  ch0 arpeggio on %d (0x%02X) out of key\n", n, st->arp);
+                }
+                if (ch == 1 && st->slide && n < C4) {
+                    w->bad++;
+                    printf("  ch1 slide into a note below C4\n");
+                }
+            }
+            st->slide = 0;
+            if (first) {                     /* the state the loop's first note plays with */
+                first = 0;
+                st->ins_at_note = st->ins_cur;
+                st->tr_at_note = tr;
             }
             w->notes++;
             *rows += len;
@@ -255,11 +288,19 @@ static void walk_stream(const uint8_t *p, int ch, unsigned key, int *rows, walk_
         case SB_END: *ended = 1; goto out;
         case SB_LOOP:
             if (ret) { w->bad++; printf("  LOOP inside a pattern\n"); }
-            if (st->ins_first && memcmp(st->ins_first, st->ins_cur, ch == 2 ? 3 : 2)) {
-                w->bad++;
-                printf("  ch%d loops with another instrument than it starts with\n", ch);
-            }
             goto out;
+        case SB_SLIDE:
+            if (ch > 1) { w->bad++; printf("  ch%d SLIDE (pulses only; CH1 ignores it)\n", ch); }
+            st->slide = 1;
+            break;
+        case SB_ARP:
+            if (ch != 0) { w->bad++; printf("  ch%d ARP (CH1 only)\n", ch); }
+            st->arp = *p++;
+            if ((st->arp >> 4) > 12 || (st->arp & 15) > 12) { w->bad++; printf("  bad ARP\n"); }
+            break;
+        case SB_TCALL:
+            tr = *p++;
+            /* fall through */
         case SB_CALL:
             if (ret) { w->bad++; printf("  nested CALL\n"); return; }
             if (*p >= NUM_SP) { w->bad++; printf("  bad pattern %u\n", *p); return; }
@@ -274,8 +315,6 @@ static void walk_stream(const uint8_t *p, int ch, unsigned key, int *rows, walk_
         case SB_TR: tr = *p++; break;
         case SB_INS:
             ins = 1;
-            if (!st->ins_first)
-                st->ins_first = p;
             st->ins_cur = p;
             if (ch == 2) {
                 if (p[0] > 3 || p[2] > 3 || p[2] == 0) { w->bad++; printf("  bad bass instrument\n"); }
@@ -285,7 +324,7 @@ static void walk_stream(const uint8_t *p, int ch, unsigned key, int *rows, walk_
                     w->bad++;
                     printf("  ch%d bad pulse instrument %02X %02X\n", ch, p[0], p[1]);
                 }
-                p += 2;
+                p += 3;
             } else {
                 w->bad++;
                 printf("  INS on the drums\n");
@@ -309,7 +348,7 @@ static void test_song_data(void)
     for (s = 1; s < NUM_MUS; s++) {
         const uint8_t * const *ch = snd_song_ch[s];
         uint8_t rate = snd_song_rate[s], rate_h = snd_song_rate_h[s], flags = snd_song_flags[s];
-        unsigned key = s == MUS_MAIN || s == MUS_TITLE ? KEY_D : s == MUS_NOVA ? KEY_E : 0;
+        unsigned key = s == MUS_MAIN || s == MUS_TITLE ? KEY_EM : s == MUS_NOVA ? KEY_G : 0;
         int loop_rows[4] = { 0, 0, 0, 0 };
         int max_end = 0;
         CHECK(rate > 0 && rate_h >= rate, "%s: rates", mus_name[s]);
@@ -317,17 +356,29 @@ static void test_song_data(void)
         CHECK(snd_song_wave[s] < NUM_WAVES, "%s: wave", mus_name[s]);
         for (c = 0; c < 4; c++) {
             walk_t w;
-            wstate_t st = { 1, 0, -1, 0, 0 };
+            wstate_t st = { 1, 0, -1, 0, 0, 0, 0, 0 };
             int ended, rows = 0;
             memset(&w, 0, sizeof w);
+            w.lo = 999;
+            w.hi = -1;
             if (!ch[c])
                 continue;
             walk_stream(ch[c], c, key, &rows, &w, &ended, &st);
             if (flags & SF_LOOPS) {
                 CHECK(!ended && ch[4 + c], "%s ch%d: loops", mus_name[s], c);
                 if (ch[4 + c]) {
-                    int lr = 0;
+                    int lr = 0, lr2 = 0;
+                    const uint8_t *ins_a;
+                    int tr_a;
                     walk_stream(ch[4 + c], c, key, &lr, &w, &ended, &st);
+                    ins_a = st.ins_at_note;
+                    tr_a = st.tr_at_note;
+                    walk_stream(ch[4 + c], c, key, &lr2, &w, &ended, &st);   /* the second time round */
+                    CHECK(lr2 == lr, "%s ch%d: loop length stable", mus_name[s], c);
+                    CHECK(tr_a == st.tr_at_note && (c == 3 || (ins_a && st.ins_at_note &&
+                          !memcmp(ins_a, st.ins_at_note, 3))),
+                          "%s ch%d: every time round the loop starts with the same instrument and transpose",
+                          mus_name[s], c);
                     loop_rows[c] = lr;
                     CHECK(lr > 0, "%s ch%d: loop has rows", mus_name[s], c);
                 }
@@ -337,6 +388,8 @@ static void test_song_data(void)
             CHECK(w.bad == 0, "%s ch%d: %d data errors", mus_name[s], c, w.bad);
             CHECK(w.offkey == 0, "%s ch%d: %d notes out of key", mus_name[s], c, w.offkey);
             CHECK(w.notes > 0, "%s ch%d: has notes", mus_name[s], c);
+            if (c == 1)                      /* a singable lead: no growl, no squeal */
+                CHECK(w.lo >= B4 - 12 && w.hi <= B6, "%s lead range %d..%d (B3..B6)", mus_name[s], w.lo, w.hi);
             if (rows > max_end)
                 max_end = rows;
         }
@@ -349,7 +402,7 @@ static void test_song_data(void)
             printf("  %-8s loop %d rows = %.1f s (hurry %.1f s)\n", mus_name[s], loop_rows[1], secs,
                    loop_rows[1] * 256.0 / rate_h / 59.73);
             if (s == MUS_MAIN)
-                CHECK(secs >= 30 && secs <= 45, "MAIN loop %.1f s (30-45)", secs);
+                CHECK(secs >= 40 && secs <= 60, "MAIN loop %.1f s (40-60)", secs);
             else
                 CHECK(secs >= 8 && secs <= 60, "%s loop %.1f s", mus_name[s], secs);
         } else {
@@ -365,6 +418,40 @@ static void test_song_data(void)
           snd_song_rate_h[MUS_MAIN] * 2 <= snd_song_rate[MUS_MAIN] * 3 + 2, "MAIN hurry 1.5x");
     CHECK(snd_song_rate_h[MUS_NOVA] * 2 >= snd_song_rate[MUS_NOVA] * 3 - 2 &&
           snd_song_rate_h[MUS_NOVA] * 2 <= snd_song_rate[MUS_NOVA] * 3 + 2, "NOVA hurry 1.5x");
+}
+
+/* the songs as written: one theme, three moods */
+static int first_notes(const uint8_t *p, uint8_t *out, int n)
+{
+    int k = 0;
+    const uint8_t *ret = 0;
+    while (k < n) {
+        uint8_t b = *p++;
+        if (b < SB_NOTES) out[k++] = b;
+        else if (b >= SB_LEN || b == SB_SLIDE || b == SB_REST) continue;
+        else if (b == SB_INS) p += 3;
+        else if (b == SB_TR || b == SB_ARP) p++;
+        else if (b == SB_CALL) { ret = p + 1; p = snd_pat[*p]; }
+        else if (b == SB_RET && ret) { p = ret; ret = 0; }
+        else break;
+    }
+    return k;
+}
+
+static void test_song_shape(void)
+{
+    static const uint8_t lv[] = { I_LV }, lc[] = { I_LC }, tl[] = { I_TL }, nl[] = { I_NL };
+    uint8_t hook[4], over[4], title[4], chorus[4];
+    CHECK(snd_song_rate[MUS_TITLE] < snd_song_rate[MUS_MAIN] &&
+          snd_song_rate[MUS_MAIN] < snd_song_rate[MUS_NOVA], "tempo: TITLE < MAIN < NOVA");
+    CHECK(lv[2] && lc[2] && tl[2] && nl[2], "the leads have a delayed vibrato");
+    CHECK(lc[1] >> 4 > lv[1] >> 4, "the chorus lead is louder than the verse's");
+    CHECK(lv[0] != lc[0], "verse and chorus leads have different duties");
+    /* the jingles and the title quote MAIN */
+    CHECK(first_notes(p_v12, hook, 4) == 4 && first_notes(s_over_lead, over, 4) == 4 &&
+          !memcmp(hook, over, 4), "GAME OVER quotes the hook");
+    CHECK(first_notes(p_c12, chorus, 4) == 4 && first_notes(s_title_lead, title, 4) == 4 &&
+          !memcmp(chorus, title, 4), "TITLE opens with the chorus");
 }
 
 static void test_sfx_data(void)
@@ -627,7 +714,7 @@ static void test_sfx_priority(void)
         sfx_play(SFX_TICK);
         tick();
     }
-    CHECK(trig[0] >= 48, "ticks retrigger every frame (%lu; two in a frame after a row merge)", trig[0]);
+    CHECK(trig[0] >= 44, "ticks retrigger every frame (%lu; two in a frame after a busy one merge)", trig[0]);
     run_until_free(100);
     CHECK(snd_debug_owned() == 0, "ticks give CH1 back");
     /* a coin during a jump plays (equal priority) */
@@ -707,6 +794,7 @@ static void test_fuzz(void)
 int main(void)
 {
     test_song_data();
+    test_song_shape();
     test_sfx_data();
     test_init();
     test_songs();

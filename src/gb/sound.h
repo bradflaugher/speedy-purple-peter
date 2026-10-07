@@ -3,8 +3,9 @@
  * Every call below only posts a request; all APU register work happens in snd_tick(), which
  * the game calls exactly once per frame from the VBlank handler.  Bank 0, no banking needed.
  *
- *   CH1 pulse  sfx channel; the songs put a quiet harmony / sparkle on it while it is free
- *   CH2 pulse  song lead (a few big sfx borrow it)
+ *   CH1 pulse  sfx channel; the songs put arpeggio chords or an echo of the lead on it while
+ *              it is free
+ *   CH2 pulse  song lead, with slides and vibrato (a few big sfx borrow it)
  *   CH3 wave   song bass (never used by sfx)
  *   CH4 noise  song drums; sfx borrow it
  *
