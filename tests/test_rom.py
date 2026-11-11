@@ -327,6 +327,30 @@ class TestRom(unittest.TestCase):
         finally:
             g2.stop()
 
+    def test_respawn_redraws_the_sector(self):
+        """Losing a life rebuilds the sector and redraws the whole view (with the screen off, so
+        every write lands): afterwards the screen is on and shows the level, on both machines."""
+        for cgb in (False, True):
+            g = Game(cgb)
+            try:
+                g.start_run()
+                g.set_keys(0x21)             # run right into the level, then let the clock run out
+                g.tick(240)
+                g.poke('time', 2)
+                for _ in range(900):
+                    g.tick()
+                    if g.w('lives') == 2 and g.w('pstate') == PS_PLAY:
+                        break
+                self.assertEqual((g.w('lives'), g.w('pstate')), (2, PS_PLAY))
+                g.set_keys(0)
+                g.tick(20)
+                self.assertTrue(g.pb.memory[0xFF40] & 0x80, 'the screen is back on')
+                self.assertEqual(g.wrong_cells(), set())
+                self.assertEqual(g.var('_dbg_vbl_late', 1), 0)
+                g.shot('%s_respawn.png' % ('cgb' if cgb else 'dmg'))
+            finally:
+                g.stop()
+
     def test_game_over_saves_the_best(self):
         g = Game(False)
         try:
@@ -346,8 +370,24 @@ class TestRom(unittest.TestCase):
             g.tick(400)                      # the game over jingle, then the card
             g.shot('dmg_game_over.png')
             self.assertEqual(g.var('_best_score', 4), score)
+            g.press(0x40)                    # SELECT: straight back into the same seed
+            for _ in range(240):
+                g.tick()
+                if g.var('_hud_on', 1) and not g.w('over'):
+                    break
+            self.assertEqual((g.w('over'), g.w('lives'), g.w('seed'), g.w('score')), (0, 3, SEED, 0))
+            g.poke('lives', 1)               # and out again, this time to the title
+            g.poke('time', 2)
+            g.set_keys(0x21)
+            for _ in range(600):
+                g.tick()
+                if g.w('over'):
+                    break
+            g.set_keys(0)
+            g.tick(400)
             g.press(0x80)
             g.tick(60)
+            self.assertEqual(g.var('_hud_on', 1), 0)
         finally:
             g.stop(save=True)
         sram = g.ram.getvalue()

@@ -236,7 +236,7 @@ restart:
         if (W.over && music_done()) {
             uint8_t t;
             for (t = 0; t < 30; t++) frame_end();
-            game_over_screen();
+            if (game_over_screen()) goto restart;
             return;
         }
     }

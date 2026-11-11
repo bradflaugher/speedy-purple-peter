@@ -44,8 +44,11 @@ pod in sector 0, 6 later), 12 + min(sector, 8) body segments, then the checkpoin
 plain ground that nothing marks (the run never visibly ends). Segments: flat ground (maybe with
 enemies), pits, capsule rows (`B?B?B`, spaced pods, bricks hiding things, star-bit rows), a high
 brick row reached from a low one, tubes (with a Chomper later on), stair pyramids (with a gap
-later on), floating platforms over wide pits, star bit arcs and comet launchers. Every hazard is
-followed by at least two flat columns.
+later on, sometimes with a trail of star bits over the steps), floating platforms over wide pits,
+star bit arcs, comet launchers, and pod alleys (two low walls with a green Dome-bot and Gloops
+between them: stomp it, kick the pod and it bowls back and forth). One sector in four hides a 1UP
+in a quiet flat stretch: an invisible block with a lone star bit hanging under it, so jumping for
+the star bit finds it. Every hazard is followed by at least two flat columns.
 
 Rules that keep every jump makeable (enforced in `tests/test_core.c` over 200 seeds):
 
@@ -65,9 +68,18 @@ sectors with enemies on 12 seeds.
   off and the sprites on; VBlank turns the window back on and the sprites off, so no sprite ever
   covers the HUD.
 - **The BG ring.** 16 metatile columns (32 tiles). A new column is built in the frame loop (never
-  on a frame the generator ran) and written by the VBlank handler, half a column per VBlank. The
-  HUD's text and the animated tiles (the pods' pulse, the star bits' twinkle) are written in
-  VBlank too, from small queues.
+  on a frame the generator ran) and written by the VBlank handler, half a column per VBlank.
+- **VRAM is only written in VBlank.** While the LCD controller draws a line it ignores writes to
+  VRAM, and on hardware a write that lands there is silently lost (a tile that never changes). So
+  during play nothing writes VRAM from the frame loop: the column, the HUD's text, changed cells
+  (a collected star bit, a bumped block) and the animated tiles (the pods' pulse, the star bits'
+  twinkle) are staged in RAM and written by one assembly routine in VBlank (`src/gb/vbl.s`). Its
+  worst case is counted in cycles and it ends at most 750 cycles into the 1140 of a Game Boy's
+  VBlank (1090 of 2280 on a Color). It was C once, took about 1000 cycles for half a column alone,
+  and left a few stale tiles in every new column on real hardware; emulators that do not model the
+  VRAM lock never showed it. `tests/test_rom.py` now compares the visible BG map with the level
+  throughout its runs and checks that no VBlank's writes ran over. A full redraw (a respawn) is
+  done with the screen off.
 - **Banks.** Bank 0: boot, interrupts, the frame loop, sound. The simulation, entities, generator,
   renderer, screens and art each sit in switchable banks (autobanked); the art tables the
   renderer needs every frame are copied to RAM at load.

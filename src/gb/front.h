@@ -54,7 +54,7 @@ void fmt_time(char *out, uint32_t frames) BANKED;                  /* "MM:SS.CC"
 /* ---- screens.c ---- */
 uint16_t title_screen(void) BANKED;    /* returns the seed to play */
 uint8_t pause_screen(void) BANKED;     /* 0 resume, 1 restart the seed, 2 quit to title */
-void game_over_screen(void) BANKED;
+uint8_t game_over_screen(void) BANKED;  /* 0 to the title, 1 play the seed again */
 void save_load(void) BANKED;
 extern uint32_t best_score[MODE_COUNT];   /* per mode */
 extern uint16_t best_dist[MODE_COUNT];
