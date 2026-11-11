@@ -88,12 +88,12 @@ static uint8_t bumping(uint16_t col, uint8_t row)
     return 0;
 }
 
-/* 26 rows of 2 tiles to the BG map, straight to VRAM between the LCD's busy periods */
+/* 26 rows of 2 tiles to the BG map. Only with the screen off: while it is on, the LCD controller
+   drops writes made as it draws a line, so everything goes through the VBlank handler (vbl.s). */
 static void vram_strip(uint8_t *dst, const uint8_t *src)
 {
     uint8_t n = LV_ROWS * 2;
     do {
-        while (STAT_REG & STATF_BUSY) {}
         dst[0] = src[0];
         dst[1] = src[1];
         src += 2;
@@ -177,7 +177,7 @@ static void build_col(uint16_t col, uint8_t *tp, uint8_t *ap)
         }
 }
 
-/* draw a column at once (a fresh view) */
+/* draw a column at once (a fresh view; the screen is off) */
 static void draw_col(uint16_t col)
 {
     uint8_t mx = (uint8_t)((col & 15) << 1);
@@ -190,42 +190,68 @@ static void draw_col(uint16_t col)
     }
 }
 
-/* one cell: 2 x 2 tiles, straight to VRAM like vram_strip */
-static void vram_cell(uint8_t *dst, const uint8_t *src)
-{
-    while (STAT_REG & STATF_BUSY) {}
-    dst[0] = src[0];
-    dst[1] = src[1];
-    while (STAT_REG & STATF_BUSY) {}
-    dst[32] = src[2];
-    dst[33] = src[3];
-}
+/* Changed cells wait here until the VBlank handler has room (CELLQ cells a VBlank). A cell is
+   looked up when it is handed over, so it always shows the level as it is by then. */
+#define BACKLOG 16
+static uint16_t bl_col[BACKLOG];
+static uint8_t bl_row[BACKLOG];
+static uint8_t bl_n;
 
-static void draw_cell(uint16_t col, uint8_t row)
+static void stage_cells(void)
 {
-    uint8_t t = vis_map[W.lv[(uint8_t)col & (LV_COLS - 1)][row]];
-    uint8_t *dst = (uint8_t *)0x9800 + ((uint16_t)row << 6) + (uint8_t)((col & 15) << 1);
-    if (W.n_fx && bumping(col, row)) t = T_SKY;
-    vram_cell(dst, ram_mt_tiles[t]);
-    if (is_cgb) {
-        VBK_REG = 1;
-        vram_cell(dst, ram_mt_attr[t]);
-        VBK_REG = 0;
+    uint8_t i, n = 0, keep = 0;
+    uint8_t *tq = cell_q[0], *aq = cell_q[1];
+    uint16_t pend = (uint16_t)((drawn_col - 1) & COLMASK);  /* the column on its way, if any */
+    if (cell_ready || !bl_n) return;
+    for (i = 0; i < bl_n; i++) {
+        uint16_t col = bl_col[i];
+        uint8_t row = bl_row[i], t;
+        const uint8_t *m;
+        uint16_t a;
+        /* off the ring by now (the camera moved on): nothing to show */
+        if ((uint16_t)((drawn_col - col - 1) & COLMASK) >= 16) continue;
+        /* full for this VBlank, or its column is still being written (it would be overwritten) */
+        if (n == CELLQ || (col_pending && col == pend)) {
+            bl_col[keep] = col;
+            bl_row[keep] = row;
+            keep++;
+            continue;
+        }
+        t = vis_map[W.lv[(uint8_t)col & (LV_COLS - 1)][row]];
+        if (W.n_fx && bumping(col, row)) t = T_SKY;
+        a = (uint16_t)(0x9800 + ((uint16_t)row << 6) + (uint8_t)((col & 15) << 1));
+        m = ram_mt_tiles[t];
+        tq[0] = (uint8_t)a; tq[1] = (uint8_t)(a >> 8);
+        tq[2] = m[0]; tq[3] = m[1]; tq[4] = m[2]; tq[5] = m[3];
+        tq += 6;
+        m = ram_mt_attr[t];
+        aq[0] = (uint8_t)a; aq[1] = (uint8_t)(a >> 8);
+        aq[2] = m[0]; aq[3] = m[1]; aq[4] = m[2]; aq[5] = m[3];
+        aq += 6;
+        n++;
     }
+    bl_n = keep;
+    cell_ready = n;                    /* published last: the handler sees whole entries */
 }
 
+/* A fresh level view: every column of the ring at once, with the screen off for the frame or two
+   it takes (it cannot be done in one VBlank, and outside VBlank the writes would not all land). */
 void render_reset(void) BANKED
 {
-    uint8_t i;
+    uint8_t i, on = (uint8_t)(LCDC_REG & LCDCF_ON);
+    uint16_t c = (uint16_t)(W.cam_x >> 4);
+    if (on) DISPLAY_OFF;               /* (waits for VBlank; no VBlank interrupts until it is on again) */
     col_pending = 0;
+    cell_ready = 0;
+    bl_n = 0;
     for (i = 0; i < T_COUNT; i++) {
         memcpy(vt[i], ram_mt_tiles[vis_map[i]], 4);
         memcpy(va[i], ram_mt_attr[vis_map[i]], 4);
     }
-    uint16_t c = (uint16_t)(W.cam_x >> 4);
     for (i = 0; i < VIEW_COLS; i++) draw_col((uint16_t)((c + i) & COLMASK));
     drawn_col = (uint16_t)((c + VIEW_COLS) & COLMASK);
     sprites_clear();
+    if (on) DISPLAY_ON;
 }
 
 static void stream(void)
@@ -239,8 +265,13 @@ static void stream(void)
         int16_t d = (int16_t)((col - c) << 4) >> 4;          /* signed 12-bit distance */
         if (d > 128) col -= 256; else if (d < -128) col += 256;
         col &= COLMASK;
-        if ((uint16_t)((drawn_col - col - 1) & COLMASK) < 16) { draw_cell(col, W.dirty_row[i]); }
+        if ((uint16_t)((drawn_col - col - 1) & COLMASK) >= 16) continue;
+        if (bl_n == BACKLOG) { render_reset(); return; }     /* (never seen: 8 cells a frame at most) */
+        bl_col[bl_n] = col;
+        bl_row[bl_n] = W.dirty_row[i];
+        bl_n++;
     }
+    stage_cells();
     /* the next column: built here, written by the VBlank handler over two VBlanks (the camera
        needs at least 6 frames to cross a column) */
     if (col_pending) return;
@@ -250,6 +281,7 @@ static void stream(void)
     if (i >= 12 && (uint8_t)(LY_REG - dbg_ly[0] + (LY_REG < dbg_ly[0] ? 154 : 0)) > 75) return;
     {
         build_col(drawn_col, col_buf[0], col_buf[1]);
+        col_src = col_buf[0];
         col_dst = (uint8_t *)0x9800 + ((drawn_col & 15) << 1);
         col_pending = 2;
         drawn_col = (uint16_t)((drawn_col + 1) & COLMASK);
@@ -588,6 +620,7 @@ void hud_draw_all(void) BANKED
 
 void hud_pause(uint8_t on) BANKED
 {
+    while (hud_ready) {}               /* a field on its way to the screen lands first */
     if (on) {
         char t[5];
         print_win(0, 0, "PAUSE");
@@ -607,11 +640,29 @@ void hud_pause(uint8_t on) BANKED
 
 static uint8_t hud_turn;
 static uint8_t hud_waited;         /* frames the HUD has waited for a quieter one */
+static uint8_t hud_n;              /* tiles staged in hud_q (at most HUDQ: a field is 7 wide) */
+
+/* HUD text for the VBlank handler: staged with hud_print, handed over by hud_update */
+static void hud_print(uint8_t x, uint8_t y, const char *s)
+{
+    uint16_t a = (uint16_t)(0x9C00 + y * 32 + x);
+    uint8_t *q = hud_q + (hud_n << 2);
+    while (*s && hud_n < HUDQ) {
+        q[0] = (uint8_t)a;
+        q[1] = (uint8_t)(a >> 8);
+        q[2] = ram_font[(uint8_t)*s++ & 127];
+        q += 4;
+        a++;
+        hud_n++;
+    }
+}
 
 /* one HUD field per frame, in turn (each costs a decimal conversion and VRAM writes) */
 static void hud_update(void)
 {
     char t[8];
+    if (hud_ready) return;             /* the last field is still waiting for its VBlank */
+    hud_n = 0;
     switch (++hud_turn & 3) {
     case 0:
         if (W.score_rev != hud_score_rev) {     /* the sim keeps the score's digits */
@@ -636,6 +687,7 @@ static void hud_update(void)
             hud_print(16, 1, t);
         }
     }
+    hud_ready = hud_n;                 /* published last: the handler sees whole entries */
 }
 
 /* ------------------------------------------------------------------ sound */
@@ -686,7 +738,8 @@ void render_frame(void) BANKED
     sounds();
     dbg_ly[4] = LY_REG;
     /* the tile animation: the capsule's 4 tiles on one frame, the star bit's on another */
-    if (!(anim_t & 3) && (anim_t >> 2) < ANIM_COUNT / 4) anim_group((uint8_t)(anim_t >> 2), anim_f);
+    if (!(anim_t & 3) && (anim_t >> 2) < ANIM_COUNT / 4 && !anim_group((uint8_t)(anim_t >> 2), anim_f))
+        anim_t--;                      /* the last group is still waiting: ask again next frame */
     if (++anim_t >= ANIM_PERIOD) {
         anim_t = 0;
         anim_f = (uint8_t)((anim_f + 1) & (ANIM_FRAMES - 1));

@@ -297,7 +297,7 @@ uint8_t pause_screen(void) BANKED
 }
 
 /* ------------------------------------------------------------------ game over */
-void game_over_screen(void) BANKED
+uint8_t game_over_screen(void) BANKED
 {
     char t[12];
     uint8_t newbest = 0, i;
@@ -326,9 +326,10 @@ void game_over_screen(void) BANKED
     print((uint8_t)(18 - strlen(mode_name[m])), 13, mode_name[m]);
     if (newbest & 1) print(4, 15, "NEW BEST SCORE");
     else if (newbest & 2) print(2, 15, "NEW BEST DISTANCE");
-    print(4, 17, "PRESS START");
+    print(0, 17, "START:MENU SEL:AGAIN");
     DISPLAY_ON;
     for (i = 0; i < 40; i++) wait_frame();
-    do wait_frame(); while (!(pressed & (J_START | J_A)));
+    do wait_frame(); while (!(pressed & (J_START | J_A | J_SELECT)));
     sfx_play(SFX_SELECT);
+    return (uint8_t)((pressed & J_SELECT) != 0);     /* straight back into the same seed */
 }

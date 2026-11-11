@@ -64,9 +64,14 @@ race your friends on identical ground: pick a seed on the title screen and share
 - **Lives and checkpoints.** You start with three lives. Losing one puts you back at the start of
   the sector you are in, rebuilt exactly as it was. Lose them all and the run is over: score,
   distance, sectors, run time and seed are shown, and your best score and distance are saved.
+  From that card **SELECT** goes straight back into the same seed; **START** returns to the title.
 - **The difficulty climbs.** Sector 1 is gentle (a flat start, a power-up pod straight away, short
   pits). Pits get wider (up to five blocks, which needs a running jump), Chompers move into the
-  tubes, red and jet Dome-bots and comet launchers appear, floating platforms span the gaps.
+  tubes, red and jet Dome-bots and comet launchers appear, floating platforms span the gaps, and
+  **pod alleys** turn up: two low walls with a Dome-bot and Gloops between them. Stomp the
+  Dome-bot, kick its pod, and it bowls back and forth through everything (you included).
+- **Secrets.** Now and then a single star bit hangs alone over a quiet stretch of ground. Jump
+  for it: there is a hidden block right above it with a 1UP inside.
 - **Built for speedrunners.** No breaks between sectors, a deterministic run per seed, an in-game
   run timer in frames, and an instant reset: **START, then SELECT** restarts the same seed.
 
@@ -138,7 +143,8 @@ src/core/   the game itself, portable C (SDCC for the Game Boy, gcc for the test
   level.c       the generator: sectors of segments, (seed, sector) -> columns
   tiles.h sim.h level.h sim_int.h
 src/gb/     the Game Boy front end
-  main.c        boot, interrupts (HUD split, VBlank column/HUD/tile writes), the frame loop
+  main.c        boot, interrupts (the HUD split, VBlank), the frame loop
+  vbl.s         every VRAM write made during play: one cycle-counted routine, in VBlank
   render.c      BG streaming, sprites, HUD, sound events
   screens.c     title + seed entry, the mode menu, pause, game over, the battery save
   sound.c       a 4-channel engine: original songs, 17 effects, click-free on real hardware
@@ -157,6 +163,8 @@ tests/      test_core.c (+ bot.c) · test_sound.c · test_assets.py · test_rom.
   byte, in both GBDK 4.3 and 4.5); see [docs/DESIGN.md](docs/DESIGN.md).
 - **An endless level in 512 bytes.** The level is a ring of 32 columns, generated just ahead of
   the camera. The BG map is a 16-column ring streamed one column at a time by the VBlank handler.
+  Nothing writes to VRAM outside VBlank during play (on hardware the LCD controller drops writes
+  made while it draws), and the ROM tests check the screen against the level as they play.
   A death rebuilds the checkpoint sector from `(seed, sector)` alone.
 - **Every sector is beatable, and the tests prove it.** A search bot plays with button presses
   only (run, jump, wait, back up, with backtracking) and must clear 12 sectors of terrain on 40

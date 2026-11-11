@@ -106,12 +106,17 @@ static void start_seg(Gen *g, uint8_t seg)
     case SEG_START:
         g->len = g->sector == 0 ? 16 : 6;
         break;
-    case SEG_FLAT:              /* a: enemy kind, b: where, c: 1 = a pair */
+    case SEG_FLAT:              /* a: enemy kind, b: where, c: 1 = a pair; d: 1 = the secret */
         g->len = rrange(g, 3, 7);
         if (chance(g, (uint8_t)(35 + (d > 9 ? 45 : d * 5)))) {
             g->a = enemy_kind(g);
             g->b = rr(g, (uint8_t)(g->len - 2));
             g->c = (uint8_t)(g->a == SP_GLOOP && chance(g, 30 + d * 4));
+        } else if (g->secret_left && g->len >= 5) {
+            /* a quiet stretch with one star bit hanging over it: jump for it and your head finds
+               the hidden block above it */
+            g->secret_left = 0;
+            g->d = 1;
         }
         break;
     case SEG_PIT:                /* (a pit wider than 3 needs a 3-column run-up) */
@@ -143,10 +148,11 @@ static void start_seg(Gen *g, uint8_t seg)
         g->a = rrange(g, 2, (uint8_t)(g->run_before >= 3 ? 4 : 3));
         g->b = (uint8_t)(d >= 1 && chance(g, (uint8_t)(20 + d * 6)));
         break;
-    case SEG_STAIRS:            /* a: height, b: gap (0 = a one-column plateau) */
+    case SEG_STAIRS:            /* a: height, b: gap (0 = a one-column plateau), c: a star trail */
         g->a = rrange(g, 2, 4);
         g->b = d == 0 ? 0 : rr(g, (uint8_t)(d < 3 ? 3 : 4));
         g->len = (uint8_t)(g->a * 2 + (g->b ? g->b : 1));
+        g->c = chance(g, 40);
         break;
     case SEG_BRIDGE:            /* a wide pit with a floating platform in the middle (3 clear
                                    columns on each side, so you jump onto it, never into its
@@ -164,6 +170,12 @@ static void start_seg(Gen *g, uint8_t seg)
     case SEG_CANNON:            /* a: height (1-2) */
         g->len = 3;
         g->a = rrange(g, 1, 2);
+        break;
+    case SEG_ALLEY:             /* two low walls with a green Dome-bot and Gloops between them:
+                                   stomp the Dome-bot, kick its pod and it bowls back and forth
+                                   (a: a third walker) */
+        g->len = 9;
+        g->a = (uint8_t)(d >= 6 && chance(g, 50));
         break;
     case SEG_END:               /* the sector's last column: its (invisible) checkpoint */
         g->len = 1;
@@ -187,6 +199,7 @@ static uint8_t pick_body_seg(Gen *g)
     w[SEG_BRIDGE] = d >= 2 ? 2 : 0;
     w[SEG_COINS] = 1;
     w[SEG_CANNON] = d >= 3 ? 2 : 0;
+    w[SEG_ALLEY] = d >= 2 ? 1 : 0;
     for (i = 0; i < SEG_COUNT; i++) sum = (uint8_t)(sum + w[i]);
     r = rr(g, sum);
     for (i = 0; i < SEG_COUNT; i++) {
@@ -206,6 +219,7 @@ static void next_seg(Gen *g)
         g->gap_next = 0;
         start_seg(g, SEG_FLAT);
         g->len = rrange(g, 2, 3);       /* never a one-column island */
+        if (g->d) { g->d = 0; g->secret_left = 1; }     /* nor is it the place for the secret */
         if (g->len < 3) g->a = 0;       /* too short for an enemy */
         else if (g->a) g->b = 0, g->c = 0;
         return;
@@ -231,6 +245,7 @@ void gen_begin(Gen *g, uint16_t seed, uint16_t sector) GEN_BANKED
     g->diff = (uint8_t)(sector > 15 ? 15 : sector);
     g->segs_left = (uint8_t)(12 + (g->diff > 8 ? 8 : g->diff));
     g->power_left = (uint8_t)(g->diff < 4 ? 2 : 1);
+    g->secret_left = (uint8_t)(sector >= 1 && (h & 0x300) == 0);     /* one sector in four */
     g->col = 0;
     g->m48 = 0;
     g->m96 = 0;
@@ -329,6 +344,7 @@ uint8_t gen_column(Gen *g, uint8_t *c, uint8_t *spawn) GEN_BANKED
     case SEG_FLAT:
         if (g->a && (p == g->b || (g->c && p == (uint8_t)(g->b + 2))))
             *spawn = SPAWN(g->a, GROUND_ROW - 1);
+        if (g->d && p == 2) { c[7] = T_HIDDEN_1UP; c[8] = T_COIN; }
         break;
     case SEG_PIT:
         c[GROUND_ROW] = c[GROUND_ROW + 1] = SKY;
@@ -371,6 +387,10 @@ uint8_t gen_column(Gen *g, uint8_t *c, uint8_t *spawn) GEN_BANKED
         else if (g->b == 0 && p == g->a) stack(c, g->a);
         else if (g->b && p < g->a + g->b) c[GROUND_ROW] = c[GROUND_ROW + 1] = SKY;
         else stack(c, (uint8_t)(g->len - p));
+        if (g->c) {                              /* star bits two cells over the steps */
+            h = p < g->a ? (uint8_t)(p + 1) : p >= g->len - g->a ? (uint8_t)(g->len - p) : g->a;
+            c[GROUND_ROW - 2 - h] = T_COIN;
+        }
         break;
     case SEG_BRIDGE:
         if (p < g->c) break;                     /* the run-up */
@@ -394,6 +414,11 @@ uint8_t gen_column(Gen *g, uint8_t *c, uint8_t *spawn) GEN_BANKED
             for (r = 0; r < g->a; r++) c[GROUND_ROW - 1 - r] = r == g->a - 1 ? T_CANNON_TOP : T_CANNON;
             *spawn = SPAWN(SP_CANNON, GROUND_ROW - g->a);
         }
+        break;
+    case SEG_ALLEY:
+        if (p == 0 || p == 8) stack(c, 2);
+        else if (p == 4) *spawn = SPAWN(SP_DOME, GROUND_ROW - 1);
+        else if (p == 6 || (g->a && p == 2)) *spawn = SPAWN(SP_GLOOP, GROUND_ROW - 1);
         break;
     case SEG_END:                                /* plain ground: nothing marks a checkpoint */
         ret |= GEN_CHECKPOINT;

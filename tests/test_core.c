@@ -201,7 +201,7 @@ static void test_generator(void)
     static uint8_t a[400][LV_ROWS], b[400][LV_ROWS];
     uint8_t sa[400], sb[400];
     uint16_t seed;
-    int i, n;
+    int i, n, secrets = 0, alleys = 0;
 
     /* determinism, and a sector rebuilt from (seed, sector) alone is identical */
     for (seed = 1; seed < 40; seed += 7) {
@@ -227,7 +227,7 @@ static void test_generator(void)
     /* the rules over many seeds and sectors */
     for (seed = 0; seed < 200; seed++) {
         Gen g;
-        int pit = 0, land = 99, n_cp = 0, last_start = -1, col;
+        int pit = 0, land = 99, n_cp = 0, last_start = -1, col, n_secret = 0;
         uint8_t prev[LV_ROWS];
         gen_begin(&g, (uint16_t)(seed * 977u), 0);
         memset(prev, 0, sizeof(prev));
@@ -240,7 +240,25 @@ static void test_generator(void)
                 if (last_start >= 0) CHECK(n_cp == 1, "seed %u: one checkpoint per sector (%d)", seed, n_cp);
                 CHECK(last_start < 0 || col - last_start >= 60, "seed %u: sector too short %d", seed, col - last_start);
                 n_cp = 0;
+                n_secret = 0;
                 last_start = col;
+            }
+            /* a hidden 1UP: at most one a sector, on quiet solid ground, with the lone star bit
+               under it that gives it away */
+            if (c[7] == T_HIDDEN_1UP) {
+                n_secret++;
+                secrets++;
+                CHECK(n_secret == 1, "seed %u col %d: two secrets in a sector", seed, col);
+                CHECK(g.seg == SEG_FLAT && g.len >= 5, "seed %u col %d: the secret in a %u-column stretch", seed, col, g.len);
+                CHECK(c[8] == T_COIN && c[GROUND_ROW] == T_GROUND_TOP && !s && prev[GROUND_ROW] == T_GROUND_TOP,
+                      "seed %u col %d: the secret's spot", seed, col);
+            }
+            for (r = 0; r < LV_ROWS; r++)
+                if (r != 7) CHECK(c[r] != T_HIDDEN_1UP, "seed %u col %d: a hidden block off its row", seed, col);
+            /* a pod alley: its Dome-bot stands between two walls */
+            if (g.seg == SEG_ALLEY && g.pos == 5) {
+                alleys++;
+                CHECK((s >> 4) == SP_DOME, "seed %u col %d: the alley's Dome-bot", seed, col);
             }
             if (f & GEN_CHECKPOINT) {
                 n_cp++;
@@ -271,6 +289,8 @@ static void test_generator(void)
             memcpy(prev, c, sizeof(prev));
         }
     }
+
+    CHECK(secrets > 20 && alleys > 100, "the generator makes secrets (%d) and alleys (%d)", secrets, alleys);
 
     /* the first sector opens like a first level: a flat start and a power-up capsule */
     {
@@ -326,6 +346,30 @@ static void test_mechanics(void)
     step(K_A);
     for (i = 0; i < 30; i++) step(K_A);
     CHECK(W.lv[4][7] == T_BRICK, "small bumps bricks");
+
+    /* the secret: a lone star bit with a hidden block over it. Jumping for the star bit takes it,
+       the head finds the block, a 1UP comes out of it and the block stays as a used capsule */
+    bench();
+    cell(4, 7, T_HIDDEN_1UP);
+    cell(4, 8, T_COIN);
+    W.px = 4 * 16;
+    CHECK(sim_visual(4, 7) == T_SKY, "the hidden block shows as sky");
+    step(K_A);
+    for (i = 0; i < 40; i++) step(K_A);
+    CHECK(W.coins == 1 && W.lv[4][8] == T_SKY, "the star bit under the secret: coins %u", W.coins);
+    CHECK(W.lv[4][7] == T_USED && W.item.kind == E_1UP, "the hidden block gave a 1UP (cell %u item %u)", W.lv[4][7], W.item.kind);
+    for (i = 0; i < 300 && W.lives == START_LIVES; i++) step(K_RIGHT);
+    CHECK(W.lives == START_LIVES + 1, "the 1UP is caught: lives %u", W.lives);
+    /* walking under it, or falling past it, does nothing: it is only there from below */
+    bench();
+    cell(4, 7, T_HIDDEN_1UP);
+    for (i = 0; i < 120; i++) step(K_RIGHT);
+    CHECK(W.lv[4][7] == T_HIDDEN_1UP && W.px > 6 * 16, "walked under the secret");
+    bench();
+    cell(4, 7, T_HIDDEN_1UP);
+    airborne(4 * 16, 64);
+    for (i = 0; i < 60; i++) step(0);
+    CHECK(W.lv[4][7] == T_HIDDEN_1UP && W.ground && W.py == GROUND_ROW * 16 - 16, "fell through the secret");
 
     /* 100 star bits make a 1UP */
     bench();

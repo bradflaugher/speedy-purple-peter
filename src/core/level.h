@@ -36,7 +36,7 @@ enum {
 /* generator segments */
 enum {
     SEG_START, SEG_FLAT, SEG_PIT, SEG_QROW, SEG_HIGH, SEG_TUBE, SEG_STAIRS, SEG_BRIDGE,
-    SEG_COINS, SEG_CANNON, SEG_END, SEG_COUNT
+    SEG_COINS, SEG_CANNON, SEG_ALLEY, SEG_END, SEG_COUNT
 };
 
 typedef struct {
@@ -50,6 +50,7 @@ typedef struct {
     uint8_t m48, m96;       /* the column number mod 48 and 96 (the decor's patterns) */
     uint8_t diff;           /* difficulty 0..15 */
     uint8_t power_left;     /* power-ups still owed to this sector */
+    uint8_t secret_left;    /* hidden 1UPs still owed to this sector (0 or 1) */
     uint8_t gap_next;       /* 1: put a short flat stretch before the next segment */
     uint8_t run_before;     /* length of the flat stretch just before this segment */
 } Gen;

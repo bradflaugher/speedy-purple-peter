@@ -22,18 +22,24 @@ extern uint8_t ram_mt_tiles[T_COUNT][4];
 extern uint8_t ram_mt_attr[T_COUNT][4];
 extern uint8_t ram_font[128];
 
+/* the VRAM work staged for the VBlank handler (main.c, vbl.s) */
+#define HUDQ  8                        /* HUD tiles a VBlank */
+#define CELLQ 4                        /* changed cells a VBlank (vbl.s: CELLQ_BYTES) */
 extern uint8_t col_buf[2][LV_ROWS * 4];
-extern uint8_t *col_dst;
+extern uint8_t *col_src, *col_dst;
 extern volatile uint8_t col_pending;
+extern uint8_t hud_q[HUDQ * 4];
+extern volatile uint8_t hud_ready;
+extern uint8_t cell_q[2][CELLQ * 6];
+extern volatile uint8_t cell_ready;
 
 void read_input(void);
 void print(uint8_t x, uint8_t y, const char *s);      /* text on the BG map */
 void print_win(uint8_t x, uint8_t y, const char *s);  /* text on the window (HUD) */
-void hud_print(uint8_t x, uint8_t y, const char *s);  /* the same, queued for the next VBlank */
 void far_copy(void *dst, const void *src, uint16_t n);
 void load_world_gfx(void);             /* world BG tiles, sprites, palettes */
 void load_title_gfx(void);             /* + the title tiles at 208, the title map */
-void anim_group(uint8_t g, uint8_t f);  /* animated BG tile group g (4 tiles) to frame f */
+uint8_t anim_group(uint8_t g, uint8_t f);  /* animated BG tile group g (4 tiles) to frame f */
 void frame_end(void);                  /* wait for VBlank, then latch the scroll */
 
 /* ---- render.c ---- */
@@ -48,7 +54,7 @@ void fmt_time(char *out, uint32_t frames) BANKED;                  /* "MM:SS.CC"
 /* ---- screens.c ---- */
 uint16_t title_screen(void) BANKED;    /* returns the seed to play */
 uint8_t pause_screen(void) BANKED;     /* 0 resume, 1 restart the seed, 2 quit to title */
-void game_over_screen(void) BANKED;
+uint8_t game_over_screen(void) BANKED;  /* 0 to the title, 1 play the seed again */
 void save_load(void) BANKED;
 extern uint32_t best_score[MODE_COUNT];   /* per mode */
 extern uint16_t best_dist[MODE_COUNT];
