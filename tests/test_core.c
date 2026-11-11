@@ -249,6 +249,7 @@ static void test_generator(void)
                 n_secret++;
                 secrets++;
                 CHECK(n_secret == 1, "seed %u col %d: two secrets in a sector", seed, col);
+                CHECK(g.seg == SEG_FLAT && g.len >= 5, "seed %u col %d: the secret in a %u-column stretch", seed, col, g.len);
                 CHECK(c[8] == T_COIN && c[GROUND_ROW] == T_GROUND_TOP && !s && prev[GROUND_ROW] == T_GROUND_TOP,
                       "seed %u col %d: the secret's spot", seed, col);
             }

@@ -219,6 +219,7 @@ static void next_seg(Gen *g)
         g->gap_next = 0;
         start_seg(g, SEG_FLAT);
         g->len = rrange(g, 2, 3);       /* never a one-column island */
+        if (g->d) { g->d = 0; g->secret_left = 1; }     /* nor is it the place for the secret */
         if (g->len < 3) g->a = 0;       /* too short for an enemy */
         else if (g->a) g->b = 0, g->c = 0;
         return;
