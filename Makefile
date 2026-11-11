@@ -17,7 +17,9 @@ HOST_CFLAGS := -std=c99 -O2 -Wall -Wextra -Werror
 CFLAGS_GB  := -Wf--max-allocs-per-node5000 -Wf--opt-code-speed -Isrc/core -Isrc/gb
 LDFLAGS_GB := -Wm-yt0x1B -Wm-ya1 -Wm-yc -Wm-yn"PURPLEPETER" -Wm-yoA -autobank -Wl-j -Wm-yS
 
-GB_OBJS := $(patsubst src/core/%.c,$(OBJ)/core_%.o,$(CORE_SRC)) $(patsubst src/gb/%.c,$(OBJ)/%.o,$(GB_SRC))
+GB_ASM    := src/gb/vbl.s
+GB_OBJS := $(patsubst src/core/%.c,$(OBJ)/core_%.o,$(CORE_SRC)) $(patsubst src/gb/%.c,$(OBJ)/%.o,$(GB_SRC)) \
+           $(patsubst src/gb/%.s,$(OBJ)/%_s.o,$(GB_ASM))
 
 .PHONY: all rom assets test test-host test-assets test-rom test-bot screenshots clean
 
@@ -35,6 +37,9 @@ $(OBJ)/core_%.o: src/core/%.c $(CORE_HDR) | $(OBJ)
 
 $(OBJ)/%.o: src/gb/%.c $(CORE_HDR) $(GB_HDR) | $(OBJ)
 	$(LCC) $(CFLAGS_GB) -c -o $@ $<
+
+$(OBJ)/%_s.o: src/gb/%.s | $(OBJ)
+	$(LCC) -c -o $@ $<
 
 $(ROM): $(GB_OBJS) | $(BUILD)
 	$(LCC) $(LDFLAGS_GB) -o $@ $(GB_OBJS)

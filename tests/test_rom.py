@@ -36,6 +36,10 @@ BUTTONS = [(0x01, 'right'), (0x02, 'left'), (0x04, 'up'), (0x08, 'down'), (0x10,
 PS_PLAY, PS_GROW, PS_SHRINK, PS_DEAD, PS_OVER = range(5)
 
 
+# what a level cell looks like (render.c vis_map): look-alikes merged, hidden blocks are sky
+VIS_MAP = [0, 1, 2, 3, 4, 5, 5, 5, 5, 9, 9, 11, 12, 13, 14, 15, 16, 17, 0] + list(range(19, 38))
+
+
 class Game:
     def __init__(self, cgb, sram=None, seed=None):
         self.ram = io.BytesIO(sram if sram is not None else bytes(SRAM_SIZE))
@@ -109,6 +113,24 @@ class Game:
                 break
         self.set_keys(0)
 
+    def wrong_cells(self):
+        """The visible level cells whose four BG map tiles are not what the level says. (A cell
+        that changed this very frame, or a bouncing block, may be one VBlank behind: callers only
+        mind a cell that is still wrong at the next look.)"""
+        m = self.pb.memory
+        mt = self.addr('_ram_mt_tiles')
+        lv = self.W + self.off['lv']
+        c = self.w('cam_x') >> 4
+        bad = set()
+        for col in range(c, c + 11):
+            a0 = 0x9800 + ((col & 15) << 1)
+            for row in range(13):
+                t = mt + VIS_MAP[m[lv + (col & 31) * 16 + row]] * 4
+                a = a0 + row * 64
+                if (m[a], m[a + 1], m[a + 32], m[a + 33]) != (m[t], m[t + 1], m[t + 2], m[t + 3]):
+                    bad.add((col & 0xFFF, row))
+        return bad
+
     def shot(self, name):
         os.makedirs(SHOTS, exist_ok=True)
         self.pb.screen.image.save(os.path.join(SHOTS, name))
@@ -152,6 +174,7 @@ class TestRom(unittest.TestCase):
         d0 = g.var('_dbg_drops')
         g.pb.memory[g.addr('_dbg_feed')] = 1
         guard = 0
+        wrong = set()
         while True:
             s = g.var('_dbg_steps')
             # keep the ring filled up to 200 steps ahead, and the stop mark just past it
@@ -166,7 +189,15 @@ class TestRom(unittest.TestCase):
             g.tick(16)
             guard += 1
             self.assertLess(guard, n, 'the ROM stopped stepping')
+            # the screen shows the level: no cell stays wrong (a write the LCD controller dropped
+            # would, until it scrolled away)
+            now = g.wrong_cells()
+            self.assertFalse(wrong & now, 'the BG map does not show the level at step %d (column, row)' % s)
+            wrong = now
         g.tick(4)       # the step counter goes up as a step begins: let the last one finish
+        # every VRAM write of the run was made inside VBlank, with at least a line to spare
+        self.assertEqual(g.var('_dbg_vbl_late', 1), 0, 'VRAM writes ran past the end of VBlank')
+        self.assertLessEqual(g.var('_dbg_vbl_ly', 1), 152)
         drops = g.var('_dbg_drops') - d0
         return g, drops
 

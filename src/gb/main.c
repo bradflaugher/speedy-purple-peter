@@ -64,70 +64,27 @@ static void lcd_isr(void)
     LCDC_REG = (uint8_t)((LCDC_REG & ~LCDCF_WINON) | LCDCF_OBJON);
 }
 
-/* the next BG column, written by the VBlank handler half a column (13 rows) at a time */
-uint8_t col_buf[2][LV_ROWS * 4];        /* tiles, CGB attributes: 2 per row, 26 rows */
-uint8_t *col_dst;                       /* its top in the BG map */
+/* ---- everything written to VRAM while the screen is on: staged here by the main loop, written
+   by the VBlank handler (vbl.s, which has the timing). Each queue is the main loop's while its
+   count is 0 and the handler's from the moment the count is set until the handler clears it. */
+uint8_t col_buf[2][LV_ROWS * 4];        /* the next BG column: tiles, CGB attributes (2 per row) */
+uint8_t *col_src, *col_dst;             /* where the next half comes from and goes to */
 volatile uint8_t col_pending;           /* halves still to write (2, 1, 0) */
-
-static void col_half(uint8_t *d, const uint8_t *s)
-{
-    uint8_t n = LV_ROWS;
-    do {
-        d[0] = s[0];
-        d[1] = s[1];
-        s += 2;
-        d += 32;
-    } while (--n);
-}
-
-volatile uint8_t anim_req;              /* 0, or 1 + group * 4 + frame: done in VBlank */
-static void anim_vbl(void);
-
-/* HUD text written by the VBlank handler (queued by hud_print) */
-#define HUDQ 24
-static uint8_t hudq_lo[HUDQ], hudq_hi[HUDQ], hudq_t[HUDQ];
-static volatile uint8_t hudq_n;
-
-void hud_print(uint8_t x, uint8_t y, const char *s)
-{
-    uint16_t a = (uint16_t)(0x9C00 + y * 32 + x);
-    while (*s) {
-        uint8_t n = hudq_n;
-        if (n >= HUDQ) return;
-        hudq_lo[n] = (uint8_t)a;
-        hudq_hi[n] = (uint8_t)(a >> 8);
-        hudq_t[n] = ram_font[(uint8_t)*s++ & 127];
-        hudq_n = (uint8_t)(n + 1);       /* published last: the handler sees whole entries */
-        a++;
-    }
-}
+const uint8_t *anim_src;                /* an animated group's 64 bytes, and their tiles in VRAM */
+uint8_t *anim_dst;
+volatile uint8_t anim_req;
+uint8_t hud_q[HUDQ * 4];                /* HUD tiles: address, tile, (unused) */
+volatile uint8_t hud_ready;
+uint8_t cell_q[2][CELLQ * 6];           /* changed cells: address and 4 tiles; the same with attributes */
+volatile uint8_t cell_ready;
+uint8_t dbg_vbl_late, dbg_vbl_ly;       /* VBlanks whose writes ran over; the latest line one ended on */
+void vbl_vram(void);
 
 static void vbl_isr(void)
 {
     if (hud_on) LCDC_REG = (uint8_t)((LCDC_REG | LCDCF_WINON) & ~LCDCF_OBJON);
     else LCDC_REG |= LCDCF_OBJON;
-    if (hudq_n) {
-        uint8_t i, vb = VBK_REG & 1;
-        VBK_REG = 0;
-        for (i = 0; i < hudq_n; i++)
-            *(uint8_t *)(((uint16_t)hudq_hi[i] << 8) | hudq_lo[i]) = hudq_t[i];
-        VBK_REG = vb;
-        hudq_n = 0;
-    }
-    if (col_pending) {
-        uint8_t off = col_pending == 2 ? 0 : LV_ROWS * 2;
-        uint8_t *d = col_dst + (col_pending == 2 ? 0 : LV_ROWS * 32);
-        col_half(d, col_buf[0] + off);
-        if (is_cgb) {
-            uint8_t vb = VBK_REG & 1;
-            VBK_REG = 1;
-            col_half(d, col_buf[1] + off);
-            VBK_REG = vb;
-        }
-        col_pending--;
-    } else if (anim_req) {
-        anim_vbl();
-    }
+    vbl_vram();
     snd_tick();
 }
 
@@ -204,19 +161,17 @@ void load_title_gfx(void)
     SWITCH_ROM(b);
 }
 
-/* animated tiles come in groups of 4 consecutive tiles (the capsule, the star bit) */
-static void anim_vbl(void)
+/* animated tiles come in groups of 4 consecutive tiles (the capsule, the star bit): the group's
+   next frame is copied in by the VBlank handler. 0 if the last one is still waiting. */
+uint8_t anim_group(uint8_t g, uint8_t f)
 {
-    uint8_t r = (uint8_t)(anim_req - 1), g = (uint8_t)(r >> 2), t = ram_anim_tile[g << 2], n = 64;
-    const uint8_t *s = ram_anim[r & 3][g << 2];
-    uint8_t *d = (uint8_t *)(t < 128 ? 0x9000 + t * 16 : 0x8000 + t * 16);
-    do { *d++ = *s++; } while (--n);
-    anim_req = 0;
-}
-
-void anim_group(uint8_t g, uint8_t f)
-{
-    anim_req = (uint8_t)(1 + (g << 2) + f);
+    uint8_t t;
+    if (anim_req) return 0;
+    t = ram_anim_tile[g << 2];
+    anim_src = ram_anim[f][g << 2];
+    anim_dst = (uint8_t *)(t < 128 ? 0x9000 + t * 16 : 0x8000 + t * 16);
+    anim_req = 1;
+    return 1;
 }
 
 void frame_end(void)
